@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- MotoExpert: tacómetro de tres segmentos (como el medidor de respaldo),
+       el último en rojo como zona roja, sobre el gris acerado del tema. -->
+  <rect width="32" height="32" rx="6" fill="#1A2227"/>
+  <g fill="none" stroke-width="4">
+    <path d="M6 20 A10 10 0 0 1 10.41 11.71" stroke="#46B5BE"/>
+    <path d="M11.31 11.17 A10 10 0 0 1 20.69 11.17" stroke="#46B5BE"/>
+    <path d="M21.59 11.71 A10 10 0 0 1 26 20" stroke="#F06A5E"/>
+  </g>
+  <path d="M16 20 L14.61 12.12" stroke="#E2E8EB" stroke-width="2.4" stroke-linecap="round"/>
+  <circle cx="16" cy="20" r="2.4" fill="#E2E8EB"/>
+  <rect x="9" y="25" width="14" height="2" rx="1" fill="#46B5BE" opacity=".45"/>
+</svg>

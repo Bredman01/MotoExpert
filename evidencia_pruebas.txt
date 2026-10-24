@@ -1,0 +1,255 @@
+MotoExpert - Evidencia de pruebas (2026-10-23 20:29)
+
+==============================================================================
+CASO 1: Caso Normal 1 - Diagnóstico único claro
+==============================================================================
+Objetivo : Comprobar que una combinación coherente de síntomas y una verificación específica produce un único diagnóstico con respaldo Alto.
+Entrada  : [('cilindrada', 150), ('alimentacion', 'carburador'), ('tablero', 'no'), ('luces', 'apagadas'), ('giro_arranque', 'no_gira'), ('clic_arranque', 'no'), ('fusible', 'fundido'), ('voltaje', 12.6)]
+Consulta : consultar([obs('cilindrada', 150), obs('alimentacion', 'carburador'), obs('tablero', 'no'), obs('luces', 'apagadas'), obs('giro_arranque', 'no_gira'), obs('clic_arranque', 'no'), obs('fusible', 'fundido'), obs('voltaje', 12.6)], E, M, R, D, I)
+Esperado : Estado con_resultados. Una sola conclusión: d03 con respaldo alto y prioridad 3. d01 descartada por voltaje normal.
+Obtenido : estado=con_resultados; resultados=d03(respaldo=alto, prioridad=3)
+           descartadas=d01, d04
+Comprobaciones:
+   [OK] estado = con_resultados
+   [OK] conclusiones = [d03]
+   [OK] respaldo d03 = alto
+   [OK] d01 en descartadas
+Veredicto: APROBADO
+
+==============================================================================
+CASO 2: Caso Normal 2 - Múltiples diagnósticos / recolección
+==============================================================================
+Objetivo : Comprobar que diagnosticar_todos/2 reúne con setof/3 varias conclusiones compatibles, sin duplicados (la entrada repite una observación) y con las alertas primero.
+Entrada  : [('giro_arranque', 'lento'), ('luces', 'debil'), ('luces', 'debil'), ('voltaje', 11.6), ('bornes', 'sulfatados'), ('falla_intermitente', 'si'), ('olor_gasolina', 'si')]
+Consulta : consultar([obs('giro_arranque', 'lento'), obs('luces', 'debil'), obs('luces', 'debil'), obs('voltaje', 11.6), obs('bornes', 'sulfatados'), obs('falla_intermitente', 'si'), obs('olor_gasolina', 'si')], E, M, R, D, I)
+Esperado : Estado con_resultados. Conclusiones en orden: a01 (alerta, prioridad 4), luego d01 y d02, ambas con respaldo alto. Sin códigos repetidos.
+Obtenido : estado=con_resultados; resultados=a01(respaldo=no_aplica, prioridad=4), d01(respaldo=alto, prioridad=2), d02(respaldo=alto, prioridad=2)
+Comprobaciones:
+   [OK] estado = con_resultados
+   [OK] primera conclusión = a01
+   [OK] contiene d01 y d02
+   [OK] sin duplicados
+   [OK] respaldo d01 = alto
+   [OK] respaldo d02 = alto
+Veredicto: APROBADO
+
+==============================================================================
+CASO 3: Caso de Exclusión - negación por fallo (\+) y corte (!)
+==============================================================================
+Objetivo : Comprobar que d04 (relé o motor de arranque) NO se diagnostica aunque haya clic y el motor no gire, porque la alimentación eléctrica es débil. estado_alimentacion/2 usa cortes para clasificar y hipotesis_activa/2 usa \+ excluida(...).
+Entrada  : [('clic_arranque', 'si'), ('giro_arranque', 'no_gira'), ('tablero', 'si'), ('luces', 'debil')]
+Consulta : consultar([obs('clic_arranque', 'si'), obs('giro_arranque', 'no_gira'), obs('tablero', 'si'), obs('luces', 'debil')], E, M, R, D, I)
+Esperado : d04 ausente de los resultados y presente en descartadas con el motivo de alimentación débil. d01 presente. estado_alimentacion = debil (una sola solución por el corte). Los diagnósticos de la rama motor quedan excluidos.
+Obtenido : estado=con_resultados; resultados=d03(respaldo=bajo, prioridad=3), d01(respaldo=medio, prioridad=2), d02(respaldo=bajo, prioridad=2)
+           descartadas=d04
+Consulta adicional: estado_alimentacion([obs(clic_arranque,si), obs(giro_arranque,no_gira), obs(tablero,si), obs(luces,debil)], E)
+           soluciones=[{'E': 'debil'}]
+Comprobaciones:
+   [OK] d04 no está en resultados
+   [OK] d04 en descartadas
+   [OK] motivo menciona alimentación
+   [OK] d01 está en resultados
+   [OK] sin diagnósticos de la rama motor
+   [OK] estado_alimentacion = debil, una sola solución
+Veredicto: APROBADO
+
+==============================================================================
+CASO 4: Caso Borde 1 - Datos insuficientes (lista parcial)
+==============================================================================
+Objetivo : Comprobar que con un solo síntoma el sistema no presenta una conclusión definitiva: propone hipótesis con respaldo bajo e informa que los datos son insuficientes.
+Entrada  : [('dificultad_arranque', 'persistente')]
+Consulta : consultar([obs('dificultad_arranque', 'persistente')], E, M, R, D, I)
+Esperado : Estado datos_insuficientes. Varias hipótesis (d05, d06, d07, d10), todas con respaldo bajo y con aviso de evidencia insuficiente.
+Obtenido : estado=datos_insuficientes; resultados=d06(respaldo=bajo, prioridad=3), d10(respaldo=bajo, prioridad=3), d05(respaldo=bajo, prioridad=2), d07(respaldo=bajo, prioridad=2)
+Comprobaciones:
+   [OK] estado = datos_insuficientes
+   [OK] hay hipótesis
+   [OK] todas con respaldo bajo
+   [OK] todas con aviso de evidencia insuficiente
+Veredicto: APROBADO
+
+==============================================================================
+CASO 5: Caso Borde 2 - Lista vacía (caso por defecto)
+==============================================================================
+Objetivo : Comprobar que una lista vacía no produce errores en Python ni en Prolog: setof/3 falla sin soluciones y la rama por defecto devuelve []; estado_consulta/3 usa su cláusula de sin datos.
+Entrada  : []
+Consulta : consultar([], E, M, R, D, I)
+Esperado : Estado sin_datos. Resultados = []. Ninguna excepción.
+Obtenido : estado=sin_datos; resultados=[] (sin conclusiones)
+Comprobaciones:
+   [OK] estado = sin_datos
+   [OK] resultados = []
+   [OK] mensaje no vacío
+Veredicto: APROBADO
+
+==============================================================================
+CASO 6: Caso Borde 2b - Elementos inválidos y entrada que no es lista
+==============================================================================
+Objetivo : Comprobar que Prolog filtra variables inexistentes, valores no admitidos y números fuera de rango, y que una entrada que no es lista cae en la cláusula por defecto de normalizar_caso/2.
+Entrada  : [('color', 'rojo'), ('luces', 'morado'), ('voltaje', 85)]  y luego el término no_lista
+Consulta : consultar([obs('color', 'rojo'), obs('luces', 'morado'), obs('voltaje', 85)], E, M, R, D, I)
+Consulta : consultar(no_lista, E, M, R, D, I)
+Esperado : Estado sin_datos, resultados [] y 3 observaciones inválidas. Con la entrada 'no_lista': estado sin_datos, sin excepción.
+Obtenido : (1) estado=sin_datos; resultados=[] (sin conclusiones); inválidas=['obs(color,rojo)', 'obs(luces,morado)', 'obs(voltaje,85)']
+           (2) estado=sin_datos; resultados=[] (sin conclusiones); inválidas=['no_lista (no es una lista)']
+Comprobaciones:
+   [OK] (1) estado = sin_datos
+   [OK] (1) resultados = []
+   [OK] (1) 3 inválidas
+   [OK] (2) estado = sin_datos
+   [OK] (2) resultados = []
+Veredicto: APROBADO
+
+==============================================================================
+CASO 7: Respaldo Alto por descarte de competidoras (d04)
+==============================================================================
+Objetivo : Comprobar la regla de respaldo Alto para diagnósticos sin verificación propia: d04 alcanza Alto cuando d01, d02 y d03 quedan descartadas por verificación.
+Entrada  : [('clic_arranque', 'si'), ('giro_arranque', 'no_gira'), ('tablero', 'si'), ('luces', 'normal'), ('voltaje', 12.7), ('bornes', 'normal'), ('fusible', 'bueno')]
+Consulta : consultar([obs('clic_arranque', 'si'), obs('giro_arranque', 'no_gira'), obs('tablero', 'si'), obs('luces', 'normal'), obs('voltaje', 12.7), obs('bornes', 'normal'), obs('fusible', 'bueno')], E, M, R, D, I)
+Esperado : Una sola conclusión: d04 con respaldo alto. d01, d02 y d03 en descartadas.
+Obtenido : estado=con_resultados; resultados=d04(respaldo=alto, prioridad=3)
+           descartadas=d01, d02, d03
+Comprobaciones:
+   [OK] conclusiones = [d04]
+   [OK] respaldo d04 = alto
+   [OK] d01, d02 y d03 descartadas
+Veredicto: APROBADO
+
+==============================================================================
+CASO 8: Fuera de alcance con alerta de seguridad
+==============================================================================
+Objetivo : Comprobar que una moto de 600 cc no recibe diagnósticos, pero sí la alerta de seguridad por fuga de combustible.
+Entrada  : [('cilindrada', 600), ('fuga_combustible', 'si'), ('giro_arranque', 'lento'), ('luces', 'debil')]
+Consulta : consultar([obs('cilindrada', 600), obs('fuga_combustible', 'si'), obs('giro_arranque', 'lento'), obs('luces', 'debil')], E, M, R, D, I)
+Esperado : Estado fuera_de_alcance. Solo la alerta a01 con prioridad 4.
+Obtenido : estado=fuera_de_alcance; resultados=a01(respaldo=no_aplica, prioridad=4)
+Comprobaciones:
+   [OK] estado = fuera_de_alcance
+   [OK] conclusiones = [a01]
+   [OK] prioridad a01 = 4
+Veredicto: APROBADO
+
+==============================================================================
+CASO 9: Entrevista simulada guiada por siguiente_pregunta/2
+==============================================================================
+Objetivo : Comprobar que Prolog elige las preguntas (primero admisión, seguridad y verificaciones básicas; luego solo las que diferencian hipótesis) y que la entrevista termina sola.
+Entrada  : respuestas de un usuario con batería descargada; las preguntas no previstas se responden 'desconocido'.
+Consulta : siguiente_pregunta(Lista, V) en cada paso; al final consultar/6.
+Esperado : primera pregunta = cilindrada; no se pregunta por carburación; termina con 'fin' en menos de 25 preguntas; conclusión d01 con respaldo alto. Después del triaje, cada pregunta es la sugerencia principal de que_falta/5.
+Obtenido : 11 preguntas -> cilindrada, alimentacion, fuga_combustible, olor_gasolina, sobrecalentamiento, interruptor_paro, nivel_combustible, giro_arranque, luces, bornes, voltaje
+           estado=con_resultados; resultados=d01(respaldo=alto, prioridad=2)
+Comprobaciones:
+   [OK] primera pregunta = cilindrada
+   [OK] no pregunta por carburación ni encendido
+   [OK] termina en menos de 25 preguntas
+   [OK] conclusión d01 con respaldo alto
+Veredicto: APROBADO
+
+==============================================================================
+CASO 10: ¿Por qué? - Traza de reglas, hechos comprobados y descartes
+==============================================================================
+Objetivo : Comprobar que explicar_consulta/5 devuelve el árbol de reglas disparadas (intermedias y finales), los hechos que unificaron con la base y las hipótesis competidoras descartadas.
+Entrada  : La misma del caso 7 (d04 con respaldo Alto por descarte).
+Esperado : Traza de d04 con R3.6 en la raíz, R2.11, R2.10, R2.15, R2.9 y R3.4; el hecho 'clic' unificado con requisito(d04, ...); d01, d02 y d03 descartadas.
+Consulta : explicar_consulta([obs('clic_arranque', 'si'), obs('giro_arranque', 'no_gira'), obs('tablero', 'si'), obs('luces', 'normal'), obs('voltaje', 12.7), obs('bornes', 'normal'), obs('fusible', 'bueno')], G, C, H, A)
+Obtenido : reglas d04 = ['R3.6', 'R2.11', 'R2.10', 'R2.7', 'R2.4', 'R1.7', 'R1.7', 'R1.7', 'R1.7', 'R2.14', 'R2.13', 'R2.6', 'R2.15', 'R2.9', 'R3.4', 'H1.10']
+           hecho clic = {'hecho': 'Clic al arrancar: sí', 'usos': ['evidencia(d01, clic_arranque, si)', 'evidencia(d04, clic_arranque, si)', 'requisito(d04, [clic_arranque-si,giro_arranque-no_gira])']}
+           alternativas = d01(descartada), d02(descartada), d03(descartada)
+Comprobaciones:
+   [OK] traza general incluye normalizar_caso (R1.5) y estado_alimentacion (R2.1)
+   [OK] la raíz de la traza de d04 es conclusion/2 (R3.6) en nivel 0
+   [OK] d04 dispara hipotesis_activa, compatible, clasificar_respaldo y prioridad
+   [OK] el respaldo Alto de d04 se explica por competidoras descartadas (R2.9)
+   [OK] el hecho 'clic' unificó con requisito(d04, ...)
+   [OK] d01, d02 y d03 aparecen como alternativas descartadas
+Veredicto: APROBADO
+
+==============================================================================
+CASO 11: ¿Por qué? - Alternativas excluidas (\+) y sin evidencia crítica
+==============================================================================
+Objetivo : Comprobar que las hipótesis que compartían síntomas se informan con su causa: exclusión por negación por fallo o requisito mínimo no cumplido.
+Entrada  : (1) La del caso 3. (2) Clic sí, giro normal, tablero sí.
+Esperado : (1) d04 excluida, motivo con \+. (2) d04 sin evidencia crítica.
+Consulta : explicar_consulta([obs('clic_arranque', 'si'), obs('giro_arranque', 'no_gira'), obs('tablero', 'si'), obs('luces', 'debil')], G, C, H, A)
+Obtenido : d04 -> {'codigo': 'd04', 'nombre': 'Posible falla del relé o motor de arranque', 'tipo': 'excluida', 'compartidos': ['Clic al arrancar: sí', 'Giro del motor al arrancar: no gira', 'Tablero: sí'], 'motivo': 'La alimentación eléctrica es débil: la causa probable es la batería o el circuito, no el arranque. (compatible/2: \\+ excluida/3 falla).'}
+Consulta : explicar_consulta([obs('clic_arranque', 'si'), obs('giro_arranque', 'normal'), obs('tablero', 'si')], G, C, H, A)
+Obtenido : d04 -> {'codigo': 'd04', 'nombre': 'Posible falla del relé o motor de arranque', 'tipo': 'sin_evidencia_critica', 'compartidos': ['Clic al arrancar: sí', 'Tablero: sí'], 'motivo': 'Comparte síntomas, pero falta evidencia crítica: no cumple el requisito mínimo (Clic al arrancar: sí; Giro del motor al arrancar: no gira).'}
+Comprobaciones:
+   [OK] (1) d04 es alternativa excluida
+   [OK] (1) el motivo cita la negación \+ excluida/3
+   [OK] (1) informa los síntomas compartidos
+   [OK] (2) d04 queda sin evidencia crítica (no cumple su requisito)
+Veredicto: APROBADO
+
+==============================================================================
+CASO 12: ¿Qué falta? - Empate y dato de desempate
+==============================================================================
+Objetivo : Comprobar que que_falta/5 detecta el empate entre d01 y d02 y sugiere el dato no ingresado de mayor peso, con su efecto sobre cada hipótesis.
+Entrada  : [giro_arranque = lento, luces = debil]
+Esperado : Situación empate; primera sugerencia bornes (confirma o descarta d02).
+Consulta : que_falta([obs('giro_arranque', 'lento'), obs('luces', 'debil')], S, M, E, G)
+Obtenido : situación=empate; evaluadas=d01(medio), d02(medio)
+           sugerencias=bornes(peso=3), voltaje(peso=3), clic_arranque(peso=1), falla_intermitente(peso=1), tiempo_sin_uso(peso=1)
+           efectos de la primera: ['Si la respuesta es «flojos»: confirmaría D02.', 'Si la respuesta es «normal»: descartaría D02.', 'Si la respuesta es «sulfatados»: confirmaría D02.']
+Comprobaciones:
+   [OK] situación = empate
+   [OK] evalúa d01 y d02 con respaldo medio
+   [OK] primera sugerencia = bornes (peso 3, menor costo que el voltaje)
+   [OK] el voltaje también se sugiere
+   [OK] no sugiere datos ya ingresados
+Veredicto: APROBADO
+
+==============================================================================
+CASO 13: ¿Qué falta? - Dictamen definitivo y fuera de alcance
+==============================================================================
+Objetivo : Comprobar que el módulo distingue un dictamen ya definitivo y que no pide datos cuando la motocicleta está fuera de alcance.
+Entrada  : (1) La del caso 1. (2) La del caso 8.
+Esperado : (1) definitivo. (2) fuera_de_alcance sin sugerencias.
+Consulta : que_falta([obs('cilindrada', 150), obs('alimentacion', 'carburador'), obs('tablero', 'no'), obs('luces', 'apagadas'), obs('giro_arranque', 'no_gira'), obs('clic_arranque', 'no'), obs('fusible', 'fundido'), obs('voltaje', 12.6)], S, M, E, G)
+Obtenido : situación=definitivo; sugerencias=0
+Consulta : que_falta([obs('cilindrada', 600), obs('fuga_combustible', 'si'), obs('giro_arranque', 'lento'), obs('luces', 'debil')], S, M, E, G)
+Obtenido : situación=fuera_de_alcance; sugerencias=0
+Comprobaciones:
+   [OK] (1) situación = definitivo
+   [OK] (1) mensaje no genérico
+   [OK] (2) situación = fuera_de_alcance
+   [OK] (2) sin sugerencias
+Veredicto: APROBADO
+
+==============================================================================
+CASO 14: Validación en Prolog con ground/1 y minúsculas
+==============================================================================
+Objetivo : Comprobar que Prolog rechaza observaciones con variables libres llegadas desde Python y acepta átomos en mayúscula convirtiéndolos a minúscula.
+Entrada  : [obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)]
+Esperado : 2 inválidas; luces = debil aceptada; d01 entre los resultados.
+Consulta : consultar([obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)], E, M, R, D, I)
+Obtenido : inválidas=['obs(voltaje,_10198)', 'obs(_10220,si)']; resultados=d01(respaldo=medio, prioridad=2), d02(respaldo=medio, prioridad=2)
+           hechos=['Intensidad de las luces: débil', 'Giro del motor al arrancar: lento']
+Comprobaciones:
+   [OK] 2 observaciones con variables libres rechazadas por ground/1
+   [OK] 'Luces'/'Debil' se aceptan como luces = debil
+   [OK] d01 se infiere con los datos limpios
+Veredicto: APROBADO
+
+==============================================================================
+CASO 15: Coherencia entre la entrevista y «¿Qué falta?»
+==============================================================================
+Objetivo : Comprobar que la entrevista y el panel usan un único criterio: un dato respondido 'No lo sé' no se vuelve a sugerir, cada pregunta es la sugerencia principal y la entrevista termina cuando ningún dato cambiaría el resultado.
+Entrada  : Caso de batería: (1) bornes = desconocido; (2) bornes normales y voltaje 11,5; (3) el mismo dictamen sin triaje; (4) voltaje desconocido; (5) entrevista completa.
+Esperado : (1) bornes no sugerido. (2) definitivo, sin sugerencias y fin. (3) pregunta la cilindrada. (4) fin con respaldo medio. (5) cero incoherencias.
+Obtenido : tras 'No lo sé' en bornes, sugerencias=['voltaje', 'clic_arranque', 'falla_intermitente', 'tiempo_sin_uso']
+           dictamen cerrado: situación=definitivo, sugerencias=[], siguiente_pregunta=None
+           dictamen Alto sin triaje: siguiente_pregunta=cilindrada
+           D01 medio sin más datos útiles: situación=insuficiente, sugerencias=[], siguiente_pregunta=None
+           entrevista completa: ['cilindrada', 'alimentacion', 'fuga_combustible', 'olor_gasolina', 'sobrecalentamiento', 'interruptor_paro', 'nivel_combustible', 'giro_arranque', 'luces', 'bornes', 'voltaje']; incoherencias=0
+Comprobaciones:
+   [OK] (1) un dato respondido 'No lo sé' no se vuelve a sugerir
+   [OK] (2) con dictamen definitivo y sin sugerencias, la entrevista termina
+   [OK] (3) aunque el dictamen esté cerrado, primero se completa el triaje de seguridad
+   [OK] (4) con respaldo Medio y sin datos útiles, la entrevista también termina
+   [OK] (5) en toda la entrevista, cada pregunta es la sugerencia principal del panel
+Veredicto: APROBADO
+
+==============================================================================
+RESUMEN: 15 de 15 casos aprobados.
+==============================================================================

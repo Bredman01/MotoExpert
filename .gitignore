@@ -1,0 +1,7 @@
+# Archivos que Python genera al ejecutar
+__pycache__/
+*.pyc
+
+# Entornos virtuales
+.venv/
+venv/

@@ -1,0 +1,43 @@
+# Tema de MotoExpert: hoja de diagnóstico de taller.
+# Grises acerados con sesgo hacia el acento (azul petróleo), tipografía
+# condensada de tablero para títulos y monoespaciada para reglas y consultas.
+# Los colores de severidad (rojo, naranja, azul, verde) solo marcan prioridad.
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+# Barlow (texto) y Barlow Condensed (títulos) son de la misma familia. El nombre
+# no debe tener palabras que empiecen por número (p. ej. "Source Sans 3"):
+# sin comillas, CSS lo considera inválido y el navegador cae en una serif.
+font = "Barlow:https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&display=swap, sans-serif"
+headingFont = "Barlow Condensed:https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&display=swap, sans-serif"
+codeFont = "JetBrains Mono:https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap, monospace"
+headingFontWeights = 700
+baseRadius = "6px"
+buttonRadius = "4px"
+showWidgetBorder = true
+
+[theme.light]
+primaryColor = "#0B7480"
+backgroundColor = "#F4F6F7"
+secondaryBackgroundColor = "#E9EEF0"
+textColor = "#1A2227"
+borderColor = "#D3DBDF"
+codeBackgroundColor = "#E9EEF0"
+redColor = "#B42318"
+orangeColor = "#B85C00"
+blueColor = "#2C64A0"
+greenColor = "#3F6F45"
+
+[theme.dark]
+primaryColor = "#46B5BE"
+backgroundColor = "#0E1316"
+secondaryBackgroundColor = "#151C20"
+textColor = "#E2E8EB"
+borderColor = "#2A353B"
+codeBackgroundColor = "#1C252A"
+redColor = "#F06A5E"
+orangeColor = "#F0A04B"
+blueColor = "#74A9E0"
+greenColor = "#86BC8C"
