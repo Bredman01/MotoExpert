@@ -2,6 +2,9 @@
 __pycache__/
 *.pyc
 
+# Ficha del entregable 1: se conserva en el computador, no forma parte de este entregable
+Ficha_Definicion_Proyecto.md
+
 # Entornos virtuales
 .venv/
 venv/

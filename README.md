@@ -15,7 +15,6 @@ Sistema experto auditable ("caja blanca") para el diagnóstico preliminar de fal
 | `Diccionario_Predicados.md` | Firma, modo y descripción de cada predicado, incluidos los nuevos |
 | `pruebas.py`, `evidencia_pruebas.txt` | 15 casos de prueba y su evidencia de ejecución |
 | `consola.py` | Versión por consola del entregable 1 (opcional, sin navegador) |
-| `Ficha_Definicion_Proyecto.md` | Ficha del proyecto (entregable 1) |
 
 ## Requisitos
 
