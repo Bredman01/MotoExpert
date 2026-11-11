@@ -206,7 +206,7 @@
   border: 1.5px solid currentColor;
 }
 .mx-sit.definitivo { color: var(--accent); }
-.mx-sit.empate, .mx-sit.insuficiente { color: var(--alta); }
+.mx-sit.empate, .mx-sit.insuficiente, .mx-sit.ambiguo { color: var(--alta); }
 .mx-sit.sin_hipotesis { color: var(--media); }
 .mx-sit.fuera_de_alcance { color: var(--crit); }
 .mx-hip { display: inline-flex; align-items: center; gap: .4rem; font-size: .85rem; padding: .3rem .5rem; background: var(--sunk); border-radius: 4px; }
@@ -285,6 +285,29 @@ table.mx-tabla { width: 100%; border-collapse: collapse; font-size: .9rem; }
 .mx-tag.descartada { color: var(--muted); }
 .mx-tag.excluida { color: var(--alta); }
 .mx-tag.sin_evidencia_critica { color: var(--media); }
+
+/* En el área de texto, Streamlit envía el formulario con Ctrl + Enter. */
+[data-testid="stTextArea"] [data-testid="InputInstructions"]::after {
+  content: "Presione Ctrl + Enter para enviar";
+}
+
+/* ---- Descripción libre: lo que entendió la gramática ------------------- */
+.mx-entendidos { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.mx-entendido {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: .75rem;
+  padding: .45rem .6rem;
+  border-left: 2px solid var(--accent);
+  background: var(--sunk);
+  font-size: .9rem;
+  line-height: 1.4;
+}
+.mx-entendido.repetido, .mx-entendido.invalido { border-left-color: var(--line); color: var(--muted); }
+.mx-frase { font-style: italic; overflow-wrap: anywhere; }
+.mx-dato { font-weight: 600; overflow-wrap: anywhere; }
+.mx-dato em { font-weight: 400; color: var(--muted); }
+@media (max-width: 640px) { .mx-entendido { grid-template-columns: 1fr; gap: .1rem; } }
 
 /* ---- Estado vacío ------------------------------------------------------- */
 .mx-vacio { display: grid; gap: .6rem; padding: 1.25rem; border: 1.5px dashed var(--line); border-radius: 6px; }

@@ -24,6 +24,18 @@ Casos del entregable 2 (módulos de explicabilidad y recomendación):
  13. ¿Qué falta? - Dictamen definitivo y caso fuera de alcance
  14. Validación en Prolog con ground/1 y átomos en minúscula
  15. Coherencia entre la entrevista guiada y el módulo «¿Qué falta?»
+Casos del entregable 3 (lenguaje natural y modo experto):
+ 16. DCG - Descripción completa en español
+ 17. DCG - Negaciones, sujeto omitido y expresiones
+ 18. DCG - Textos vacíos, ajenos, repetidos y fuera de rango
+ 19. Modo experto - assertz/1, persistencia y reinicio
+ 20. Pre-procesamiento numérico con scikit-learn (opcional)
+ 21. Causas sin distinguir: Alto confirmado por la misma prueba
+ 22. Modo experto: pregunta y reglas nuevas que distinguen diagnósticos
+ 23. Modo experto: editar lo aprendido (sin cambios si hay errores)
+
+Las pruebas usan una copia temporal de la base con el conocimiento aprendido
+vacío: no dependen de lo que el experto haya enseñado ni lo modifican.
 
 Uso:  python pruebas.py
 
@@ -33,7 +45,10 @@ Autor: Bredman Estiven Velez Cortez
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 
 from motor import ErrorMotor, MotorMotoExpert
@@ -474,6 +489,128 @@ def caso_coherencia(motor: MotorMotoExpert):
     ]
 
 
+# ---------------------------------------------------------------------------
+# Casos del entregable 3: lenguaje natural (DCG) y modo experto
+# ---------------------------------------------------------------------------
+TEXTO_DCG_1 = ("Mi moto de 150 cc no arranca, el motor gira lento y las luces están débiles.\n"
+               "No huele a gasolina y la batería marca 11,5 voltios")
+TEXTO_DCG_2 = ("No hay fugas. A veces no arranca por las mañanas, da tirones y bota humo negro; "
+               "el filtro de aire está muy sucio. Lleva 3 meses guardada con gasolina vieja.")
+
+
+def caso_dcg(motor: MotorMotoExpert, texto: str, esperado: dict, diagnostico=None):
+    i = motor.interpretar(texto)
+    obtenidos = dict(i["observaciones"])
+    obtenido = [f"Consulta : {i['consulta']}",
+                "Obtenido : " + "; ".join(f"{r['variable']}={r['valor']} ← «{r['frase']}»"
+                                          for r in i["reconocidos"]),
+                f"           no reconocidas={i['no_reconocidas']}"]
+    comprobaciones = [("hechos extraídos = esperados", obtenidos == esperado),
+                      ("ninguna palabra con contenido quedó sin reconocer", i["no_reconocidas"] == [])]
+    if diagnostico:
+        r = motor.consultar(i["observaciones"])
+        obtenido.append(f"           dictamen={resumen(r)}")
+        comprobaciones.append((f"{diagnostico[0]} con respaldo {diagnostico[1]} a partir del texto",
+                               respaldo_de(r, diagnostico[0]) == diagnostico[1]))
+    return obtenido, comprobaciones
+
+
+def caso_dcg_bordes(motor: MotorMotoExpert):
+    vacio = motor.interpretar("")
+    ajeno = motor.interpretar("quisiera saber el precio de una llanta")
+    mixto = motor.interpretar("el motor no gira, el motor gira lento y la moto tiene 5000 cc")
+    estados = [(r["variable"], r["valor"], r["estado"]) for r in mixto["reconocidos"]]
+    obtenido = [f"Obtenido : (1) {vacio['observaciones']} {vacio['no_reconocidas']}",
+                f"           (2) {ajeno['observaciones']} no reconocidas={ajeno['no_reconocidas']}",
+                f"           (3) {estados}"]
+    return obtenido, [
+        ("(1) texto vacío: sin observaciones ni errores", vacio["observaciones"] == []),
+        ("(2) texto ajeno: sin observaciones", ajeno["observaciones"] == []),
+        ("(2) informa 'precio' y 'llanta' como no reconocidas",
+         {"precio", "llanta"} <= set(ajeno["no_reconocidas"])),
+        ("(3) el primer giro vale y el segundo queda como repetido",
+         ("giro_arranque", "no_gira", "aceptado") in estados
+         and ("giro_arranque", "lento", "repetido") in estados),
+        ("(3) 5000 cc se marca inválido y no se usa",
+         ("cilindrada", 5000, "invalido") in estados and "cilindrada" not in dict(mixto["observaciones"])),
+    ]
+
+
+def caso_experto(motor: MotorMotoExpert):
+    ruta = motor.ruta_aprendido()
+    with open(ruta, encoding="utf-8") as archivo:
+        antes = archivo.read()
+    mala = motor.aprender({"nombre": " ", "subsistema": "", "rama": "otra", "prioridad": 9,
+                           "evidencias": [], "verificaciones": [], "descartes": [("luces", "morado")],
+                           "competidoras": ["d99"], "recomendaciones": []})
+    ficha = {"nombre": "Regulador de voltaje (prueba)", "subsistema": "Sistema de carga",
+             "rama": "electrica", "prioridad": 3,
+             "evidencias": [("luces", "debil"), ("falla_intermitente", "si")],
+             "verificaciones": [("voltaje", "bajo")], "descartes": [],
+             "competidoras": ["d01", "d02"],
+             "recomendaciones": ["Revisar el regulador de voltaje en un taller."]}
+    ok = motor.aprender(ficha)
+    codigo = ok["codigo"]
+    r = motor.consultar([("luces", "debil"), ("falla_intermitente", "si"), ("voltaje", 11.4)])
+    with open(ruta, encoding="utf-8") as archivo:
+        escrito = archivo.read()
+    # Un proceso de Prolog nuevo, sin PySwip: simula reiniciar el programa.
+    base = base_de(motor)
+    reinicio = subprocess.run(
+        ["swipl", "-q", "-g", f"(diagnostico({codigo}, N, _, _) -> write(N) ; write(no_existe)), halt",
+         base], capture_output=True, text=True, encoding="utf-8", timeout=60)
+    olvido = motor.olvidar(codigo)
+    base_original = motor.olvidar("d01")
+    with open(ruta, encoding="utf-8") as archivo:
+        despues = archivo.read()
+    obtenido = [f"Obtenido : ficha inválida -> {mala['estado']}, {len(mala['errores'])} errores",
+                f"           ficha válida -> {ok}",
+                f"           dictamen con {codigo}: {resumen(r)}",
+                f"           proceso nuevo de Prolog -> {reinicio.stdout.strip()!r}",
+                f"           olvidar {codigo} -> {olvido['estado']}; olvidar d01 -> {base_original['estado']}"]
+    return obtenido, [
+        ("(1) la ficha inválida se rechaza con sus errores", mala["estado"] == "error" and len(mala["errores"]) >= 6),
+        ("(2) la ficha válida se aprende con un código nuevo", ok["estado"] == "ok" and codigo.startswith("d")),
+        ("(3) el diagnóstico aprendido participa en consultar/6 con respaldo alto",
+         respaldo_de(r, codigo) == "alto"),
+        ("(4) queda escrito en conocimiento_aprendido.pl",
+         f"diagnostico({codigo}, 'Regulador de voltaje (prueba)'" in escrito),
+        ("(5) un proceso de Prolog nuevo lo carga desde el archivo",
+         reinicio.stdout.strip() == "Regulador de voltaje (prueba)"),
+        ("(6) olvidar lo retira de la memoria y deja el archivo como estaba",
+         olvido["estado"] == "ok" and despues == antes
+         and codigo not in [d["codigo"] for d in motor.catalogo_diagnosticos()]),
+        ("(7) un diagnóstico de la base original no se puede borrar", base_original["estado"] == "error"),
+    ]
+
+
+def caso_clasificador(motor: MotorMotoExpert):
+    from clasificador import CLASIFICADORES, convertir_mediciones
+    temp = CLASIFICADORES["temperatura"]
+    dias = CLASIFICADORES["dias_sin_uso"]
+    casos_t = {t: convertir_mediciones({"temperatura": t})[0] for t in (85, 117, 118, 135)}
+    casos_d = {d: convertir_mediciones({"dias_sin_uso": d})[0] for d in (3, 7, 29, 45)}
+    _, fuera = convertir_mediciones({"temperatura": 900})
+    obs, _ = convertir_mediciones({"temperatura": 135, "dias_sin_uso": 45})
+    r = motor.consultar(obs)
+    obtenido = [f"Obtenido : método={temp.metodo}; umbral temperatura={temp.umbrales()}; "
+                f"umbrales días={dias.umbrales()}",
+                f"           temperatura -> {casos_t}",
+                f"           días -> {casos_d}",
+                f"           900 °C -> {fuera}",
+                f"           consultar({obs}) -> {resumen(r)}"]
+    return obtenido, [
+        ("el árbol aprende el umbral 117,5 °C de la tabla de referencia", temp.umbrales() == [117.5]),
+        ("y los umbrales 6,5 y 29,5 días", dias.umbrales() == [6.5, 29.5]),
+        ("117 °C -> no; 118 °C -> si",
+         casos_t[117] == [("sobrecalentamiento", "no")] and casos_t[118] == [("sobrecalentamiento", "si")]),
+        ("3 -> dias, 7 -> semanas, 45 -> meses",
+         [casos_d[k][0][1] for k in (3, 7, 45)] == ["dias", "semanas", "meses"]),
+        ("una medición fuera de rango no produce hechos", fuera and "error" in fuera[0]),
+        ("los hechos discretos alimentan al motor (alerta A02)", "a02" in codigos(r)),
+    ]
+
+
 CASOS_MODULOS = [
     {"nombre": "¿Por qué? - Traza de reglas, hechos comprobados y descartes",
      "objetivo": "Comprobar que explicar_consulta/5 devuelve el árbol de reglas disparadas "
@@ -516,6 +653,80 @@ CASOS_MODULOS = [
      "esperado": "(1) bornes no sugerido. (2) definitivo, sin sugerencias y fin. (3) pregunta la "
                  "cilindrada. (4) fin con respaldo medio. (5) cero incoherencias.",
      "ejecutar": caso_coherencia},
+    {"nombre": "Lenguaje natural - Descripción completa con la DCG",
+     "objetivo": "Comprobar que interpretar_texto/4 analiza una oración en español (con tildes, "
+                 "comas y un salto de línea) y extrae los hechos que alimentan al motor.",
+     "entrada": TEXTO_DCG_1,
+     "esperado": "cilindrada 150, dificultad persistente, giro lento, luces débiles, sin olor a "
+                 "gasolina y voltaje 11,5; ninguna palabra sin reconocer; D01 con respaldo alto.",
+     "ejecutar": lambda motor: caso_dcg(motor, TEXTO_DCG_1, {
+         "cilindrada": 150, "dificultad_arranque": "persistente", "giro_arranque": "lento",
+         "luces": "debil", "olor_gasolina": "no", "voltaje": 11.5}, diagnostico=("d01", "alto"))},
+    {"nombre": "Lenguaje natural - Negaciones, sujeto omitido y expresiones",
+     "objetivo": "Comprobar negaciones ('no hay fugas'), sujeto implícito ('a veces no arranca'), "
+                 "cópula con intensificador ('está muy sucio') y medidas sin unidad explícita.",
+     "entrada": TEXTO_DCG_2,
+     "esperado": "fuga no, dificultad ocasional, condición en frío, tirones, humo negro, filtro "
+                 "sucio, tiempo sin uso en meses y gasolina vieja.",
+     "ejecutar": lambda motor: caso_dcg(motor, TEXTO_DCG_2, {
+         "fuga_combustible": "no", "dificultad_arranque": "ocasional", "condicion_motor": "frio",
+         "tirones": "si", "humo": "negro", "filtro_aire": "sucio", "tiempo_sin_uso": "meses",
+         "combustible_viejo": "si"})},
+    {"nombre": "Lenguaje natural - Textos vacíos, ajenos, repetidos y fuera de rango",
+     "objetivo": "Comprobar que la DCG no falla ni inventa hechos: un texto vacío o ajeno no "
+                 "produce observaciones; un dato repetido vale la primera vez; un número fuera de "
+                 "rango se marca inválido y no se usa.",
+     "entrada": "(1) ''. (2) 'quisiera saber el precio de una llanta'. (3) 'el motor no gira, el "
+                "motor gira lento y la moto tiene 5000 cc'.",
+     "esperado": "(1) y (2) sin observaciones; (2) informa 'precio' y 'llanta' como no "
+                 "reconocidas. (3) giro no_gira; el segundo giro repetido; 5000 cc inválido.",
+     "ejecutar": caso_dcg_bordes},
+    {"nombre": "Modo experto - assertz/1 y persistencia en conocimiento_aprendido.pl",
+     "objetivo": "Comprobar que aprender_diagnostico/4 valida la ficha, inyecta el diagnóstico "
+                 "con assertz/1, lo escribe en el archivo .pl, que un proceso de Prolog NUEVO lo "
+                 "carga al iniciar y que olvidar_diagnostico/3 lo retira de la memoria y del archivo.",
+     "entrada": "Ficha inválida; luego ficha 'Regulador de voltaje (prueba)' con evidencias "
+                "luces débiles y falla intermitente, verificación voltaje bajo.",
+     "esperado": "(1) errores sin cambios. (2) estado ok y nuevo código. (3) participa en "
+                 "consultar/6. (4) escrito en el archivo. (5) visible tras reiniciar Prolog. "
+                 "(6) olvidado de memoria y archivo; la base original no se puede borrar.",
+     "ejecutar": caso_experto},
+    {"nombre": "Pre-procesamiento numérico (opcional) - clasificador scikit-learn",
+     "objetivo": "Comprobar que el clasificador convierte mediciones continuas en hechos "
+                 "discretos antes de enviarlos a Prolog, con umbrales aprendidos de una tabla de "
+                 "referencia.",
+     "entrada": "Temperaturas 85, 117, 118, 135 y 900 °C; días 3, 7, 29 y 45.",
+     "esperado": "Umbrales 117,5 °C y 6,5/29,5 días; 135 °C y 45 días producen "
+                 "sobrecalentamiento = si y tiempo_sin_uso = meses, que activan la alerta A02.",
+     "ejecutar": caso_clasificador},
+    {"nombre": "Causas sin distinguir - Alto confirmado por la misma prueba",
+     "objetivo": "Comprobar que si dos diagnósticos que compiten quedan en Alto confirmados por "
+                 "exactamente la misma prueba, «¿Qué falta?» informa 'ambiguo' en lugar de "
+                 "'definitivo', y que no lo hace cuando cada uno tiene su propia prueba.",
+     "entrada": "(1) Control: giro lento, luces débiles, voltaje 11,6 y bornes sulfatados. "
+                "(2) Diagnóstico aprendido 'Regulador de voltaje dañado' confirmado por voltaje "
+                "bajo, con luces débiles, falla intermitente, bornes normales y voltaje 12,3.",
+     "esperado": "(1) definitivo. (2) el regulador y D01 en Alto; situación ambiguo.",
+     "ejecutar": lambda motor: caso_ambiguo(motor)},
+    {"nombre": "Modo experto - Pregunta y reglas nuevas que distinguen diagnósticos",
+     "objetivo": "Comprobar que el experto puede crear una pregunta nueva (con sus frases para la "
+                 "DCG) y reglas sobre diagnósticos existentes, que el sistema las usa para "
+                 "distinguir causas, que persisten tras reiniciar y que se pueden retirar.",
+     "entrada": "Pregunta 'Voltaje al acelerar' (sí/no). Reglas: 'no' confirma el regulador, "
+                "'sí' lo descarta y 'no' descarta D01. Descripción con 'el voltaje no sube al acelerar'.",
+     "esperado": "La pregunta se sugiere para distinguir; la DCG la reconoce; queda solo el "
+                 "regulador en Alto; un proceso nuevo carga todo; al final el archivo queda igual.",
+     "ejecutar": lambda motor: caso_pregunta_y_reglas(motor)},
+    {"nombre": "Modo experto - Editar lo aprendido (y no cambiar nada si hay errores)",
+     "objetivo": "Comprobar que un diagnóstico y una pregunta aprendidos se pueden corregir "
+                 "conservando su código, y que una edición inválida se rechaza con sus errores "
+                 "sin modificar nada.",
+     "entrada": "Edición inválida del diagnóstico (nombre de otro, sin subsistema, prioridad 9, "
+                "compite consigo mismo) y de la pregunta (quita «No», que usa una regla). Luego "
+                "ediciones válidas.",
+     "esperado": "Los errores se informan y el archivo queda idéntico; las ediciones válidas se "
+                 "aplican y la regla agregada aparte se conserva.",
+     "ejecutar": lambda motor: caso_edicion(motor)},
 ]
 
 
@@ -542,11 +753,170 @@ def informar(comprobaciones: list[tuple[str, bool]]) -> bool:
     return aprobado
 
 
+FICHA_REGULADOR = {
+    "nombre": "Regulador de voltaje dañado", "subsistema": "Sistema de carga", "rama": "electrica",
+    "prioridad": 3, "evidencias": [("luces", "debil"), ("falla_intermitente", "si")],
+    "verificaciones": [("voltaje", "bajo")], "descartes": [], "competidoras": ["d01", "d02"],
+    "recomendaciones": ["Revisar el regulador de voltaje en un taller."]}
+CASO_REGULADOR = [("luces", "debil"), ("falla_intermitente", "si"), ("bornes", "normal"), ("voltaje", 12.3)]
+
+
+def caso_ambiguo(motor: MotorMotoExpert):
+    control = [("giro_arranque", "lento"), ("luces", "debil"), ("voltaje", 11.6), ("bornes", "sulfatados")]
+    antes = motor.que_falta(control)
+    codigo = motor.aprender(FICHA_REGULADOR)["codigo"]
+    r = motor.consultar(CASO_REGULADOR)
+    f = motor.que_falta(CASO_REGULADOR)
+    motor.olvidar(codigo)
+    obtenido = [f"Obtenido : control D01+D02 -> {antes['situacion']}",
+                f"           con {codigo}: dictamen={resumen(r)}",
+                f"           ¿Qué falta? -> {f['situacion']}; evaluadas="
+                f"{[e['codigo'] for e in f['evaluadas']]}"]
+    return obtenido, [
+        ("control: D01 y D02 confirmadas cada una por su propia prueba -> definitivo",
+         antes["situacion"] == "definitivo"),
+        (f"{codigo} y D01 quedan en Alto", respaldo_de(r, codigo) == "alto" and respaldo_de(r, "d01") == "alto"),
+        ("como las confirma la misma prueba (voltaje bajo), la situación es «ambiguo», no definitivo",
+         f["situacion"] == "ambiguo"),
+        ("el panel evalúa justo esas dos hipótesis", {e["codigo"] for e in f["evaluadas"]} == {codigo, "d01"}),
+    ]
+
+
+def caso_pregunta_y_reglas(motor: MotorMotoExpert):
+    ruta = motor.ruta_aprendido()
+    with open(ruta, encoding="utf-8") as archivo:
+        antes = archivo.read()
+    mala = motor.aprender_pregunta({"etiqueta": "", "texto": "", "grupo": "x", "tipo": "x",
+                                    "opciones": ["Sí"], "frases": [("Tal vez", "algo")]})
+    codigo = motor.aprender(FICHA_REGULADOR)["codigo"]
+    p = motor.aprender_pregunta({
+        "etiqueta": "Voltaje al acelerar",
+        "texto": "Con el motor encendido, ¿sube el voltaje de la batería al acelerar?",
+        "grupo": "electrico", "tipo": "prueba_tecnica", "opciones": ["Sí", "No"],
+        "frases": [("No", "el voltaje no sube al acelerar"), ("Sí", "el voltaje sube al acelerar")]})
+    var = p["variable"]
+    r1 = motor.aprender_regla(codigo, "verificacion", var, "no")
+    r2 = motor.aprender_regla(codigo, "descarte", var, "si")
+    r3 = motor.aprender_regla("d01", "descarte", var, "no")
+    repetida = motor.aprender_regla("d01", "descarte", var, "no")
+    sugerida = motor.que_falta(CASO_REGULADOR)["sugerencias"][0]["variable"]
+    entrevista = motor.siguiente_pregunta(
+        [("cilindrada", 150), ("alimentacion", "carburador"), ("fuga_combustible", "no"),
+         ("olor_gasolina", "no"), ("sobrecalentamiento", "no"), ("interruptor_paro", "marcha"),
+         ("nivel_combustible", "medio"), ("giro_arranque", "normal")] + CASO_REGULADOR)
+    texto = motor.interpretar("las luces están débiles, la falla es intermitente, los bornes están "
+                              "bien, la batería marca 12,3 V y el voltaje no sube al acelerar")
+    r = motor.consultar(texto["observaciones"])
+    f = motor.que_falta(texto["observaciones"])
+    en_catalogo = var in [c["variable"] for c in motor.catalogo()]
+    reinicio = subprocess.run(
+        ["swipl", "-q", "-g", "reglas_aprendidas(R), length(R, N), write(N), "
+         f"(variable({var}, _, _, _, _) -> write(' pregunta') ; true), halt", base_de(motor)],
+        capture_output=True, text=True, encoding="utf-8", timeout=60)
+    en_uso = motor.olvidar_pregunta(var)
+    for regla in (r1, r2, r3):
+        motor.olvidar_regla(regla["id"])
+    motor.olvidar(codigo)
+    limpia = motor.olvidar_pregunta(var)
+    with open(ruta, encoding="utf-8") as archivo:
+        despues = archivo.read()
+    obtenido = [f"Obtenido : pregunta inválida -> {len(mala['errores'])} errores",
+                f"           pregunta -> {p}; reglas -> {[x['id'] for x in (r1, r2, r3)]}; repetida -> {repetida['estado']}",
+                f"           sugerida por ¿Qué falta? -> {sugerida}; entrevista pregunta -> {entrevista}",
+                f"           DCG -> {texto['observaciones']}",
+                f"           dictamen -> {resumen(r)}; situación -> {f['situacion']}",
+                f"           proceso nuevo de Prolog -> {reinicio.stdout.strip()!r}",
+                f"           olvidar pregunta en uso -> {en_uso['estado']}; tras limpiar -> {limpia['estado']}"]
+    return obtenido, [
+        ("(1) la pregunta inválida se rechaza con sus errores", mala["estado"] == "error" and len(mala["errores"]) >= 5),
+        ("(2) la pregunta se crea y entra al catálogo del formulario", p["estado"] == "ok" and en_catalogo),
+        ("(3) las tres reglas se crean y una repetida se rechaza",
+         all(x["estado"] == "ok" for x in (r1, r2, r3)) and repetida["estado"] == "error"),
+        ("(4) ¿Qué falta? y la entrevista sugieren la pregunta nueva para distinguir",
+         sugerida == var and entrevista == var),
+        ("(5) la DCG reconoce la frase de la pregunta nueva", dict(texto["observaciones"]).get(var) == "no"),
+        (f"(6) con esa respuesta queda solo {codigo}: D01 descartada por la regla nueva",
+         codigos(r) == [codigo] and respaldo_de(r, codigo) == "alto" and f["situacion"] == "definitivo"),
+        ("(7) un proceso de Prolog nuevo carga las 3 reglas y la pregunta", reinicio.stdout.strip() == "3 pregunta"),
+        ("(8) una pregunta en uso no se puede borrar; limpia el archivo al final",
+         en_uso["estado"] == "error" and limpia["estado"] == "ok" and despues == antes),
+    ]
+
+
+def caso_edicion(motor: MotorMotoExpert):
+    ruta = motor.ruta_aprendido()
+    codigo = motor.aprender(FICHA_REGULADOR)["codigo"]
+    var = motor.aprender_pregunta({"etiqueta": "Voltaje al acelerar", "texto": "¿Sube el voltaje al acelerar?",
+                                   "grupo": "electrico", "tipo": "prueba_tecnica", "opciones": ["Sí", "No"],
+                                   "frases": [("No", "el voltaje no sube al acelerar")]})["variable"]
+    regla = motor.aprender_regla(codigo, "verificacion", var, "no")
+    with open(ruta, encoding="utf-8") as archivo:
+        antes = archivo.read()
+
+    ficha_mala = dict(FICHA_REGULADOR, nombre="Batería descargada o debilitada", subsistema="",
+                      prioridad=9, competidoras=[codigo])
+    mala_d = motor.editar_diagnostico(codigo, ficha_mala)
+    mala_p = motor.editar_pregunta(var, {"etiqueta": "Voltaje al acelerar", "texto": "x", "grupo": "electrico",
+                                         "tipo": "prueba_tecnica", "opciones": ["Sí", "Tal vez"], "frases": []})
+    with open(ruta, encoding="utf-8") as archivo:
+        tras_errores = archivo.read()
+
+    datos = motor.datos_diagnostico(codigo)
+    ok_d = motor.editar_diagnostico(codigo, dict(datos, prioridad=2,
+                                                 recomendaciones=datos["recomendaciones"] + ["Medir la carga."]))
+    ok_p = motor.editar_pregunta(var, {"etiqueta": "Voltaje al acelerar", "texto": "¿Sube el voltaje al acelerar?",
+                                       "grupo": "electrico", "tipo": "prueba_tecnica",
+                                       "opciones": ["Sí", "No", "No sé medirlo"],
+                                       "frases": [("No", "el voltaje no sube")]})
+    nuevo = motor.datos_diagnostico(codigo)
+    entiende = dict(motor.interpretar("el voltaje no sube")["observaciones"]).get(var)
+    reglas = len(motor.reglas_aprendidas())
+    motor.olvidar_regla(regla["id"])
+    motor.olvidar(codigo)
+    motor.olvidar_pregunta(var)
+    obtenido = [f"Obtenido : edición inválida del diagnóstico -> {mala_d['estado']}: {mala_d['errores']}",
+                f"           edición inválida de la pregunta -> {mala_p['estado']}: {mala_p['errores']}",
+                f"           ediciones válidas -> {ok_d['estado']}, {ok_p['estado']}; prioridad={nuevo['prioridad']}; "
+                f"recomendaciones={nuevo['recomendaciones']}; reglas={reglas}; frase editada -> {entiende}"]
+    return obtenido, [
+        ("(1) la edición inválida del diagnóstico se rechaza explicando cada error",
+         mala_d["estado"] == "error" and len(mala_d["errores"]) == 4),
+        ("(2) quitar una respuesta que usa una regla se rechaza",
+         mala_p["estado"] == "error" and any("se usa" in x for x in mala_p["errores"])),
+        ("(3) tras los errores, lo aprendido y el archivo quedan EXACTAMENTE igual", tras_errores == antes),
+        ("(4) la edición válida cambia la prioridad y las recomendaciones, con el mismo código",
+         ok_d["estado"] == "ok" and nuevo["prioridad"] == 2 and "Medir la carga." in nuevo["recomendaciones"]),
+        ("(5) la regla agregada aparte se conserva al editar", reglas == 1),
+        ("(6) la pregunta editada usa sus frases nuevas", ok_p["estado"] == "ok" and entiende == "no"),
+    ]
+
+
+def base_de(motor: MotorMotoExpert) -> str:
+    """Ruta de la base que cargó el motor (la copia de prueba)."""
+    return os.path.join(os.path.dirname(motor.ruta_aprendido()), "base_conocimiento.pl")
+
+
+def copia_de_prueba() -> str:
+    """
+    Copia base_conocimiento.pl a una carpeta temporal con el conocimiento
+    aprendido vacío. Así las pruebas no dependen de lo que el experto haya
+    enseñado al sistema y nunca modifican el conocimiento_aprendido.pl real.
+    """
+    carpeta = tempfile.mkdtemp(prefix="motoexpert_pruebas_")
+    origen = os.path.dirname(os.path.abspath(__file__))
+    shutil.copy(os.path.join(origen, "base_conocimiento.pl"), carpeta)
+    with open(os.path.join(carpeta, "conocimiento_aprendido.pl"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(":- encoding(utf8).\n")
+    return os.path.join(carpeta, "base_conocimiento.pl")
+
+
 def main() -> int:
     escribir(f"MotoExpert - Evidencia de pruebas ({datetime.now():%Y-%m-%d %H:%M})")
+    escribir("Base: copia de base_conocimiento.pl con el conocimiento aprendido vacío.")
     escribir()
     try:
-        motor = MotorMotoExpert()
+        motor = MotorMotoExpert(copia_de_prueba())
+        motor.consulta_libre("guardar_aprendido")   # el archivo vacío, con el encabezado de Prolog
     except ErrorMotor as exc:
         escribir(f"No fue posible iniciar el motor: {exc}")
         return 1

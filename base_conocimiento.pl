@@ -1,4 +1,23 @@
 :- encoding(utf8).
+
+% Predicados que el modo experto amplía en tiempo de ejecución con
+% assertz/1 (sección 10). Son dinámicos y sus cláusulas continúan en
+% conocimiento_aprendido.pl, que se incluye al final de este archivo.
+:- dynamic diagnostico/4, prioridad_base/2, evidencia/3, verificacion/3,
+           contraevidencia/3, descarte/2, compite_con/2, recomendacion/2,
+           variable/5, opciones/2, expresion_lex/3,
+           aprendido/2, aprendido_variable/2, texto_valor_aprendido/3,
+           regla_aprendida/3.
+:- discontiguous diagnostico/4, prioridad_base/2, evidencia/3, verificacion/3,
+           contraevidencia/3, descarte/2, compite_con/2, recomendacion/2,
+           variable/5, opciones/2, expresion_lex/3.
+
+% Carpeta de este archivo: allí se guarda el conocimiento aprendido.
+:- dynamic directorio_base/1.
+:- prolog_load_context(directory, Dir),
+   retractall(directorio_base(_)),
+   assertz(directorio_base(Dir)).
+
 /*  =========================================================================
     MotoExpert
     Sistema experto basado en reglas para el diagnóstico preliminar de
@@ -31,6 +50,10 @@
       6. Predicados de consulta invocados desde Python
       7. Módulo de explicabilidad "¿Por qué?" (traza de inferencia)
       8. Módulo de recomendación "¿Qué falta?" (desempate)
+      9. Lenguaje natural: gramática DCG que convierte una descripción
+         en texto libre en observaciones obs(Variable, Valor)
+     10. Modo experto: adquisición de conocimiento con assertz/1 y
+         persistencia en conocimiento_aprendido.pl
 
     Python (interfaz Streamlit) nunca usa read/1 en Prolog: cada consulta
     recibe la lista completa y devuelve resultados como listas.
@@ -480,6 +503,7 @@ mensaje_falta(insuficiente,     'Hay una hipótesis destacada, pero su respaldo 
 mensaje_falta(sin_hipotesis,    'Ninguna hipótesis tiene todavía evidencia a favor. El dato sugerido es el que más hipótesis compatibles permite evaluar.').
 mensaje_falta(fuera_de_alcance, 'La motocicleta está fuera del alcance: no se buscan datos adicionales para diagnosticar.').
 mensaje_falta(sin_sugerencias,  'No queda ningún dato del catálogo que cambie el resultado. Se recomienda una revisión profesional.').
+mensaje_falta(ambiguo,          'Varios diagnósticos que se confunden entre sí quedaron con respaldo Alto por la misma prueba, así que todavía no se sabe cuál es. El dato sugerido es el que ayuda a distinguirlos.').
 
 
 /* =========================================================================
@@ -626,6 +650,9 @@ senales_riesgo_caso(Caso, Senales) :-
 % CORTE + FALLBACK: si hay forma legible se usa; si no, el mismo valor.
 valor_legible(Val, Texto) :-
     texto_valor(Val, T), !,
+    Texto = T.
+valor_legible(Val, Texto) :-                  % valores de preguntas del experto
+    texto_valor_aprendido(_, Val, T), !,
     Texto = T.
 valor_legible(Val, Val).
 
@@ -1520,20 +1547,52 @@ situacion_evidencia(Caso, Situacion, Objetivo) :-
     findall(R, member(R-_-_, Cands), Rs),
     max_list(Rs, Max),
     findall(C, member(Max-C-_, Cands), Tope),
-    clasificar_situacion(Max, Tope, Cands, Situacion, Objetivo).
+    clasificar_situacion(Caso, Max, Tope, Cands, Situacion, Objetivo).
 
-% R8.3 clasificar_situacion(+RangoMax, +Tope, +Candidatas, -Situacion, -Objetivo)
+% R8.3 clasificar_situacion(+Caso, +RangoMax, +Tope, +Candidatas, -Situacion, -Objetivo)
+% ambiguo     : dos diagnósticos que compiten quedaron en Alto confirmados por
+%               exactamente la misma prueba (R8.3b): el Alto no dice cuál es.
+%               El objetivo son esos diagnósticos, para buscar qué los distingue.
 % definitivo  : la mejor tiene respaldo Alto; el objetivo son las demás.
 % empate      : dos o más comparten el mejor respaldo (Medio o Bajo).
 % insuficiente: una sola destaca sin llegar a Alto; objetivo, todas las activas.
 % CORTE: casos excluyentes; la última cláusula es el caso por defecto.
-clasificar_situacion(Max, _, Cands, definitivo, Objetivo) :-
+clasificar_situacion(Caso, Max, Tope, _, ambiguo, Confundidas) :-
+    rango_respaldo(alto, Max),
+    confundidas(Caso, Tope, Confundidas),
+    Confundidas \== [], !.
+clasificar_situacion(_, Max, _, Cands, definitivo, Objetivo) :-
     rango_respaldo(alto, Max), !,
     findall(C, ( member(R-C-_, Cands), R < Max ), Objetivo).
-clasificar_situacion(_, Tope, _, empate, Tope) :-
+clasificar_situacion(_, _, Tope, _, empate, Tope) :-
     length(Tope, N), N >= 2, !.
-clasificar_situacion(_, _, Cands, insuficiente, Objetivo) :-
+clasificar_situacion(_, _, _, Cands, insuficiente, Objetivo) :-
     findall(C, member(_-C-_, Cands), Objetivo).
+
+% R8.3b confundidas(+Caso, +Tope, -Codigos)
+% Diagnósticos con respaldo Alto que compiten entre sí y cuyas pruebas
+% confirmatorias presentes en el caso son las mismas. Dos fallas
+% confirmadas cada una por su propia prueba (por ejemplo, voltaje bajo para
+% D01 y bornes sulfatados para D02) no se confunden: pueden coexistir.
+confundidas(Caso, Tope, Codigos) :-
+    findall(C,
+            ( member(A, Tope), member(B, Tope), A @< B,
+              competidoras(A, B),
+              misma_confirmacion(Caso, A, B),
+              member(C, [A, B]) ),
+            C0),
+    sort(C0, Codigos).
+
+misma_confirmacion(Caso, A, B) :-
+    confirmaciones(Caso, A, VA),
+    VA \== [],
+    confirmaciones(Caso, B, VB),
+    VA == VB.
+
+% confirmaciones(+Caso, +Diagnostico, -Lista): pruebas a favor presentes.
+confirmaciones(Caso, Cod, Lista) :-
+    findall(V-X, ( verificacion(Cod, V, X), hecho_caso(Caso, V, X) ), L0),
+    sort(L0, Lista).
 
 % R8.4 efecto_valor(+Caso, +Hipotesis, +Variable, +Valor, -Efecto)
 % Efecto que tendría Variable = Valor sobre la hipótesis.
@@ -1666,3 +1725,1305 @@ mensaje_falta_caso(Situacion, [], Mensaje) :-
     mensaje_falta(sin_sugerencias, Mensaje).
 mensaje_falta_caso(Situacion, _, Mensaje) :-
     mensaje_falta(Situacion, Mensaje).
+
+
+/* =========================================================================
+   9. LENGUAJE NATURAL: GRAMÁTICA DCG
+   Convierte una descripción en texto libre ("la moto no arranca, el motor
+   gira lento y las luces están débiles") en observaciones obs(Var, Valor)
+   que alimentan al mismo motor de inferencia.
+
+   Dos niveles de análisis:
+     - Léxico (R9.2): una DCG sobre los caracteres separa palabras,
+       números ("11,5" -> 11.5) y signos de puntuación.
+     - Sintáctico (R9.3 a R9.5): una DCG sobre las palabras reconoce
+       enunciados de la forma  sujeto + predicado  ("las luces | están
+       débiles"), expresiones fijas ("huele a gasolina") y medidas
+       ("150 cc", "11,5 voltios"). El sujeto puede omitirse ("no arranca").
+   El análisis es robusto: las palabras que no forman un enunciado se
+   saltan y se informan como no reconocidas.
+
+   El vocabulario está en hechos (9.1): para que el sistema entienda una
+   expresión nueva basta agregar un hecho, sin tocar la gramática.
+   Todas las palabras están en minúscula y sin tildes (R9.1 normaliza).
+   ========================================================================= */
+
+% -------------------------------------------------------------------------
+% 9.1 LÉXICO
+% -------------------------------------------------------------------------
+
+% sustantivo_lex(Entidad, Palabras): núcleos del sujeto.
+% Las formas de varias palabras van antes que sus prefijos.
+sustantivo_lex(moto,          [motocicleta]).
+sustantivo_lex(moto,          [moto]).
+sustantivo_lex(arranque,      [motor,de,arranque]).
+sustantivo_lex(motor,         [motor]).
+sustantivo_lex(arranque,      [arranque]).
+sustantivo_lex(arranque,      [burro]).
+sustantivo_lex(luces,         [luces]).
+sustantivo_lex(luces,         [luz]).
+sustantivo_lex(luces,         [farolas]).
+sustantivo_lex(luces,         [farola]).
+sustantivo_lex(luces,         [bombillos]).
+sustantivo_lex(tablero,       [tablero]).
+sustantivo_lex(tablero,       [panel]).
+sustantivo_lex(tablero,       [velocimetro]).
+sustantivo_lex(tablero,       [testigos]).
+sustantivo_lex(bateria,       [bateria]).
+sustantivo_lex(bornes,        [bornes,de,la,bateria]).
+sustantivo_lex(bornes,        [bornes]).
+sustantivo_lex(bornes,        [terminales]).
+sustantivo_lex(fusible,       [fusible,principal]).
+sustantivo_lex(fusible,       [fusible]).
+sustantivo_lex(bujia,         [bujia]).
+sustantivo_lex(filtro,        [filtro,de,aire]).
+sustantivo_lex(filtro,        [filtro]).
+sustantivo_lex(interruptor,   [interruptor,de,apagado]).
+sustantivo_lex(interruptor,   [interruptor]).
+sustantivo_lex(interruptor,   [switch]).
+sustantivo_lex(interruptor,   [suiche]).
+sustantivo_lex(ralenti,       [ralenti]).
+sustantivo_lex(ralenti,       [minimo]).
+sustantivo_lex(gasolina,      [gasolina]).
+sustantivo_lex(gasolina,      [combustible]).
+sustantivo_lex(gasolina,      [tanque]).
+sustantivo_lex(compresion,    [compresion]).
+sustantivo_lex(chispa,        [chispa]).
+sustantivo_lex(mantenimiento, [mantenimiento]).
+
+% atributo_lex(Entidad, Variable, Valor, Palabras): adjetivos que necesitan
+% un sujeto ("las luces | están débiles").
+atributo_lex(luces,         luces,                 debil,       [con,poca,fuerza]).
+atributo_lex(luces,         luces,                 debil,       [debiles]).
+atributo_lex(luces,         luces,                 debil,       [debil]).
+atributo_lex(luces,         luces,                 debil,       [bajitas]).
+atributo_lex(luces,         luces,                 debil,       [bajas]).
+atributo_lex(luces,         luces,                 debil,       [tenues]).
+atributo_lex(luces,         luces,                 debil,       [opacas]).
+atributo_lex(luces,         luces,                 apagadas,    [apagadas]).
+atributo_lex(luces,         luces,                 apagadas,    [apagada]).
+atributo_lex(luces,         luces,                 apagadas,    [muertas]).
+atributo_lex(luces,         luces,                 normal,      [normales]).
+atributo_lex(luces,         luces,                 normal,      [normal]).
+atributo_lex(luces,         luces,                 normal,      [bien]).
+atributo_lex(tablero,       tablero,               no,          [apagado]).
+atributo_lex(tablero,       tablero,               no,          [muerto]).
+atributo_lex(tablero,       tablero,               si,          [encendido]).
+atributo_lex(tablero,       tablero,               si,          [prendido]).
+atributo_lex(arranque,      giro_arranque,         lento,       [lento]).
+atributo_lex(arranque,      giro_arranque,         lento,       [pesado]).
+atributo_lex(arranque,      giro_arranque,         lento,       [debil]).
+atributo_lex(bornes,        bornes,                sulfatados,  [con,sulfato]).
+atributo_lex(bornes,        bornes,                sulfatados,  [sulfatados]).
+atributo_lex(bornes,        bornes,                sulfatados,  [sulfatado]).
+atributo_lex(bornes,        bornes,                sulfatados,  [oxidados]).
+atributo_lex(bornes,        bornes,                flojos,      [flojos]).
+atributo_lex(bornes,        bornes,                flojos,      [flojo]).
+atributo_lex(bornes,        bornes,                flojos,      [sueltos]).
+atributo_lex(bornes,        bornes,                normal,      [normales]).
+atributo_lex(bornes,        bornes,                normal,      [limpios]).
+atributo_lex(bornes,        bornes,                normal,      [firmes]).
+atributo_lex(bornes,        bornes,                normal,      [bien]).
+atributo_lex(fusible,       fusible,               fundido,     [fundido]).
+atributo_lex(fusible,       fusible,               fundido,     [quemado]).
+atributo_lex(fusible,       fusible,               fundido,     [danado]).
+atributo_lex(fusible,       fusible,               fundido,     [roto]).
+atributo_lex(fusible,       fusible,               bueno,       [bueno]).
+atributo_lex(fusible,       fusible,               bueno,       [sano]).
+atributo_lex(fusible,       fusible,               bueno,       [bien]).
+atributo_lex(bujia,         bujia,                 carbonizada, [con,carbon]).
+atributo_lex(bujia,         bujia,                 carbonizada, [carbonizada]).
+atributo_lex(bujia,         bujia,                 carbonizada, [negra]).
+atributo_lex(bujia,         bujia,                 humeda,      [humeda]).
+atributo_lex(bujia,         bujia,                 humeda,      [mojada]).
+atributo_lex(bujia,         bujia,                 desgastada,  [desgastada]).
+atributo_lex(bujia,         bujia,                 desgastada,  [gastada]).
+atributo_lex(bujia,         bujia,                 normal,      [normal]).
+atributo_lex(bujia,         bujia,                 normal,      [buena]).
+atributo_lex(bujia,         bujia,                 normal,      [bien]).
+atributo_lex(filtro,        filtro_aire,           sucio,       [lleno,de,polvo]).
+atributo_lex(filtro,        filtro_aire,           sucio,       [sucio]).
+atributo_lex(filtro,        filtro_aire,           sucio,       [tapado]).
+atributo_lex(filtro,        filtro_aire,           sucio,       [obstruido]).
+atributo_lex(filtro,        filtro_aire,           limpio,      [limpio]).
+atributo_lex(filtro,        filtro_aire,           limpio,      [nuevo]).
+atributo_lex(interruptor,   interruptor_paro,      paro,        [en,off]).
+atributo_lex(interruptor,   interruptor_paro,      paro,        [off]).
+atributo_lex(interruptor,   interruptor_paro,      paro,        [apagado]).
+atributo_lex(interruptor,   interruptor_paro,      marcha,      [en,run]).
+atributo_lex(interruptor,   interruptor_paro,      marcha,      [run]).
+atributo_lex(interruptor,   interruptor_paro,      marcha,      [encendido]).
+atributo_lex(ralenti,       ralenti_inestable,     si,          [inestable]).
+atributo_lex(ralenti,       ralenti_inestable,     si,          [irregular]).
+atributo_lex(ralenti,       ralenti_inestable,     si,          [disparejo]).
+atributo_lex(ralenti,       ralenti_inestable,     no,          [estable]).
+atributo_lex(gasolina,      combustible_viejo,     si,          [vieja]).
+atributo_lex(gasolina,      combustible_viejo,     si,          [viejo]).
+atributo_lex(gasolina,      combustible_viejo,     no,          [nueva]).
+atributo_lex(gasolina,      combustible_viejo,     no,          [fresca]).
+atributo_lex(gasolina,      nivel_combustible,     vacio,       [vacio]).
+atributo_lex(gasolina,      nivel_combustible,     bajo,        [en,reserva]).
+atributo_lex(gasolina,      nivel_combustible,     medio,       [a,la,mitad]).
+atributo_lex(gasolina,      nivel_combustible,     alto,        [lleno]).
+atributo_lex(compresion,    compresion,            baja,        [baja]).
+atributo_lex(compresion,    compresion,            normal,      [normal]).
+atributo_lex(compresion,    compresion,            normal,      [buena]).
+atributo_lex(chispa,        chispa,                debil,       [debil]).
+atributo_lex(chispa,        chispa,                adecuada,    [buena]).
+atributo_lex(mantenimiento, mantenimiento_reciente, si,         [al,dia]).
+atributo_lex(mantenimiento, mantenimiento_reciente, no,         [atrasado]).
+atributo_lex(motor,         sobrecalentamiento,    si,          [sobrecalentado]).
+atributo_lex(motor,         sobrecalentamiento,    si,          [recalentado]).
+atributo_lex(motor,         sobrecalentamiento,    si,          [caliente]).
+
+% accion_lex(Entidad, Variable, Valor, Palabras): predicados verbales.
+% Sin sujeto ("no arranca") solo se aceptan las acciones de la moto y del
+% motor, que son el tema de la descripción (ver sujeto_implicito/1). Las
+% formas negadas y las más largas van antes que las que contienen.
+accion_lex(moto,     dificultad_arranque, ocasional,  [a,veces,no,prende]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [a,veces,no,arranca]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [a,veces,no,enciende]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [a,veces,le,cuesta,prender]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [a,veces,le,cuesta,arrancar]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [de,vez,en,cuando,no,prende]).
+accion_lex(moto,     dificultad_arranque, ocasional,  [de,vez,en,cuando,no,arranca]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,quiere,prender]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,quiere,arrancar]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,quiere,encender]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,arranca]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,prende]).
+accion_lex(moto,     dificultad_arranque, persistente,[no,enciende]).
+accion_lex(moto,     dificultad_arranque, persistente,[le,cuesta,prender]).
+accion_lex(moto,     dificultad_arranque, persistente,[le,cuesta,arrancar]).
+accion_lex(moto,     dificultad_arranque, persistente,[le,cuesta,encender]).
+accion_lex(moto,     dificultad_arranque, persistente,[cuesta,prenderla]).
+accion_lex(moto,     dificultad_arranque, persistente,[cuesta,arrancarla]).
+accion_lex(moto,     dificultad_arranque, no,         [arranca,bien]).
+accion_lex(moto,     dificultad_arranque, no,         [prende,bien]).
+accion_lex(moto,     dificultad_arranque, no,         [enciende,bien]).
+accion_lex(moto,     dificultad_arranque, no,         [prende,normal]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,en,el,minimo]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,en,minimo]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,en,ralenti]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,en,los,semaforos]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,cuando,esta,quieta]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga,al,soltar,el,acelerador]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,me,apaga]).
+accion_lex(moto,     se_apaga_ralenti,    si,         [se,apaga]).
+accion_lex(moto,     tirones,             si,         [da,tirones]).
+accion_lex(moto,     tirones,             si,         [da,jalones]).
+accion_lex(moto,     tirones,             si,         [se,jalonea]).
+accion_lex(moto,     tirones,             si,         [tironea]).
+accion_lex(moto,     tirones,             si,         [cabecea]).
+accion_lex(moto,     perdida_potencia,    si,         [no,tiene,fuerza]).
+accion_lex(moto,     perdida_potencia,    si,         [no,tiene,potencia]).
+accion_lex(moto,     perdida_potencia,    si,         [no,coge,velocidad]).
+accion_lex(moto,     perdida_potencia,    si,         [le,falta,fuerza]).
+accion_lex(moto,     perdida_potencia,    si,         [perdio,fuerza]).
+accion_lex(moto,     perdida_potencia,    si,         [perdio,potencia]).
+accion_lex(moto,     perdida_potencia,    si,         [anda,sin,fuerza]).
+accion_lex(moto,     perdida_potencia,    si,         [no,jala]).
+accion_lex(moto,     perdida_potencia,    si,         [no,sube]).
+accion_lex(moto,     vacios_aceleracion,  si,         [se,ahoga,al,acelerar]).
+accion_lex(moto,     vacios_aceleracion,  si,         [se,traba,al,acelerar]).
+accion_lex(moto,     vacios_aceleracion,  si,         [falla,al,acelerar]).
+accion_lex(moto,     vacios_aceleracion,  si,         [tiene,vacios]).
+accion_lex(moto,     vacios_aceleracion,  si,         [se,ahoga]).
+accion_lex(moto,     falla_intermitente,  si,         [falla,a,ratos]).
+accion_lex(moto,     falla_intermitente,  si,         [falla,de,vez,en,cuando]).
+accion_lex(moto,     sobrecalentamiento,  no,         [no,se,calienta]).
+accion_lex(moto,     sobrecalentamiento,  si,         [se,calienta,mucho]).
+accion_lex(moto,     sobrecalentamiento,  si,         [se,sobrecalienta]).
+accion_lex(moto,     sobrecalentamiento,  si,         [se,recalienta]).
+accion_lex(moto,     sobrecalentamiento,  si,         [se,calienta]).
+accion_lex(moto,     ruidos_anormales,    no,         [no,hace,ruidos]).
+accion_lex(moto,     ruidos_anormales,    no,         [no,hace,ruido]).
+accion_lex(moto,     ruidos_anormales,    si,         [hace,ruidos,raros]).
+accion_lex(moto,     ruidos_anormales,    si,         [hace,ruido]).
+accion_lex(moto,     ruidos_anormales,    si,         [suena,raro]).
+accion_lex(moto,     ruidos_anormales,    si,         [suena,feo]).
+accion_lex(moto,     ruidos_anormales,    si,         [cascabelea]).
+accion_lex(moto,     ruidos_anormales,    si,         [golpetea]).
+accion_lex(moto,     fuga_combustible,    no,         [no,gotea]).
+accion_lex(moto,     fuga_combustible,    si,         [gotea,gasolina]).
+accion_lex(moto,     fuga_combustible,    si,         [bota,gasolina]).
+accion_lex(moto,     fuga_combustible,    si,         [pierde,gasolina]).
+accion_lex(moto,     olor_gasolina,       no,         [no,huele,a,gasolina]).
+accion_lex(moto,     olor_gasolina,       si,         [huele,a,gasolina]).
+accion_lex(moto,     olor_gasolina,       si,         [huele,a,combustible]).
+accion_lex(moto,     mantenimiento_reciente, si,      [tiene,el,mantenimiento,al,dia]).
+accion_lex(moto,     mantenimiento_reciente, si,      [tiene,mantenimiento,al,dia]).
+accion_lex(motor,    giro_arranque,       no_gira,    [ni,siquiera,gira]).
+accion_lex(motor,    giro_arranque,       no_gira,    [no,da,vueltas]).
+accion_lex(motor,    giro_arranque,       no_gira,    [no,da,vuelta]).
+accion_lex(motor,    giro_arranque,       no_gira,    [no,gira]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,muy,lento]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,muy,despacio]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,con,dificultad]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,lento]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,despacio]).
+accion_lex(motor,    giro_arranque,       lento,      [gira,pesado]).
+accion_lex(motor,    giro_arranque,       lento,      [da,vueltas,lento]).
+accion_lex(motor,    giro_arranque,       normal,     [gira,normal]).
+accion_lex(motor,    giro_arranque,       normal,     [gira,bien]).
+accion_lex(arranque, clic_arranque,       si,         [solo,hace,clic]).
+accion_lex(arranque, clic_arranque,       si,         [solo,suena,clic]).
+accion_lex(arranque, clic_arranque,       si,         [hace,clic]).
+accion_lex(arranque, clic_arranque,       si,         [suena,clic]).
+accion_lex(arranque, giro_arranque,       no_gira,    [no,funciona]).
+accion_lex(arranque, giro_arranque,       no_gira,    [no,responde]).
+accion_lex(luces,    luces,               apagadas,   [no,prenden]).
+accion_lex(luces,    luces,               apagadas,   [no,encienden]).
+accion_lex(luces,    luces,               apagadas,   [no,funcionan]).
+accion_lex(luces,    luces,               apagadas,   [no,alumbran]).
+accion_lex(luces,    luces,               debil,      [alumbran,poco]).
+accion_lex(luces,    luces,               debil,      [prenden,bajitas]).
+accion_lex(luces,    luces,               normal,     [alumbran,bien]).
+accion_lex(tablero,  tablero,             no,         [no,marca,nada]).
+accion_lex(tablero,  tablero,             no,         [no,prende]).
+accion_lex(tablero,  tablero,             no,         [no,enciende]).
+accion_lex(tablero,  tablero,             no,         [no,funciona]).
+accion_lex(tablero,  tablero,             si,         [si,prende]).
+accion_lex(tablero,  tablero,             si,         [prende]).
+accion_lex(tablero,  tablero,             si,         [enciende]).
+accion_lex(tablero,  tablero,             si,         [funciona]).
+accion_lex(bornes,   bornes,              sulfatados, [tienen,sulfato]).
+
+% sujeto_implicito(Entidad): de qué se habla cuando se omite el sujeto.
+sujeto_implicito(moto).
+sujeto_implicito(motor).
+
+% expresion_lex(Variable, Valor, Palabras): expresiones completas que no
+% necesitan sujeto. Las negadas van antes que las afirmativas.
+expresion_lex(alimentacion,       carburador,  [de,carburador]).
+expresion_lex(alimentacion,       carburador,  [carburador]).
+expresion_lex(alimentacion,       carburador,  [carburada]).
+expresion_lex(alimentacion,       inyeccion,   [fuel,injection]).
+expresion_lex(alimentacion,       inyeccion,   [inyeccion]).
+expresion_lex(alimentacion,       inyeccion,   [inyectada]).
+expresion_lex(clic_arranque,      no,          [no,se,escucha,clic]).
+expresion_lex(clic_arranque,      no,          [no,se,oye,clic]).
+expresion_lex(clic_arranque,      no,          [no,suena,clic]).
+expresion_lex(clic_arranque,      no,          [no,hace,clic]).
+expresion_lex(clic_arranque,      no,          [sin,clic]).
+expresion_lex(clic_arranque,      si,          [se,escucha,un,clic]).
+expresion_lex(clic_arranque,      si,          [se,oye,un,clic]).
+expresion_lex(clic_arranque,      si,          [suena,un,clic]).
+expresion_lex(clic_arranque,      si,          [clic]).
+expresion_lex(clic_arranque,      si,          [click]).
+expresion_lex(fuga_combustible,   no,          [no,hay,fugas]).
+expresion_lex(fuga_combustible,   no,          [no,hay,fuga]).
+expresion_lex(fuga_combustible,   no,          [sin,fugas]).
+expresion_lex(fuga_combustible,   no,          [sin,fuga]).
+expresion_lex(fuga_combustible,   si,          [fuga,de,gasolina]).
+expresion_lex(fuga_combustible,   si,          [fuga,de,combustible]).
+expresion_lex(fuga_combustible,   si,          [fugas,de,gasolina]).
+expresion_lex(fuga_combustible,   si,          [goteo,de,gasolina]).
+expresion_lex(olor_gasolina,      no,          [sin,olor,a,gasolina]).
+expresion_lex(olor_gasolina,      no,          [no,huele,a,gasolina]).
+expresion_lex(olor_gasolina,      si,          [olor,a,gasolina]).
+expresion_lex(olor_gasolina,      si,          [olor,a,combustible]).
+expresion_lex(olor_gasolina,      si,          [huele,a,gasolina]).
+expresion_lex(humo,               ninguno,     [no,bota,humo]).
+expresion_lex(humo,               ninguno,     [no,echa,humo]).
+expresion_lex(humo,               ninguno,     [sin,humo]).
+expresion_lex(humo,               negro,       [humo,negro]).
+expresion_lex(humo,               azul,        [humo,azulado]).
+expresion_lex(humo,               azul,        [humo,azul]).
+expresion_lex(humo,               blanco,      [humo,blanco]).
+expresion_lex(sobrecalentamiento, no,          [sin,sobrecalentamiento]).
+expresion_lex(sobrecalentamiento, no,          [no,se,calienta]).
+expresion_lex(sobrecalentamiento, si,          [sobrecalentamiento]).
+expresion_lex(sobrecalentamiento, si,          [recalentamiento]).
+expresion_lex(sobrecalentamiento, si,          [se,recalienta]).
+expresion_lex(ruidos_anormales,   no,          [sin,ruidos]).
+expresion_lex(ruidos_anormales,   no,          [no,hace,ruido]).
+expresion_lex(ruidos_anormales,   si,          [ruidos,raros]).
+expresion_lex(ruidos_anormales,   si,          [ruido,raro]).
+expresion_lex(ruidos_anormales,   si,          [ruidos,extranos]).
+expresion_lex(ruidos_anormales,   si,          [ruido,extrano]).
+expresion_lex(ruidos_anormales,   si,          [ruidos,metalicos]).
+expresion_lex(ruidos_anormales,   si,          [ruido,metalico]).
+expresion_lex(ruidos_anormales,   si,          [ruidos,anormales]).
+expresion_lex(ruidos_anormales,   si,          [golpeteo]).
+expresion_lex(ruidos_anormales,   si,          [cascabeleo]).
+expresion_lex(ruidos_anormales,   si,          [traqueteo]).
+expresion_lex(tirones,            si,          [tirones]).
+expresion_lex(tirones,            si,          [jalones]).
+expresion_lex(ralenti_inestable,  si,          [el,minimo,sube,y,baja]).
+expresion_lex(ralenti_inestable,  si,          [ralenti,inestable]).
+expresion_lex(ralenti_inestable,  si,          [minimo,inestable]).
+expresion_lex(ralenti_inestable,  si,          [minimo,irregular]).
+expresion_lex(ralenti_inestable,  si,          [se,acelera,sola]).
+expresion_lex(vacios_aceleracion, si,          [vacios,al,acelerar]).
+expresion_lex(vacios_aceleracion, si,          [vacios]).
+expresion_lex(vacios_aceleracion, si,          [ahogos]).
+expresion_lex(perdida_potencia,   si,          [perdida,de,potencia]).
+expresion_lex(perdida_potencia,   si,          [falta,de,fuerza]).
+expresion_lex(perdida_potencia,   si,          [sin,fuerza]).
+expresion_lex(perdida_potencia,   si,          [poca,fuerza]).
+expresion_lex(falla_intermitente, si,          [a,veces,si,y,a,veces,no]).
+expresion_lex(falla_intermitente, si,          [a,veces,si,a,veces,no]).
+expresion_lex(falla_intermitente, si,          [intermitente]).
+expresion_lex(falla_intermitente, si,          [a,ratos]).
+expresion_lex(falla_intermitente, si,          [va,y,viene]).
+expresion_lex(condicion_motor,    ambos,       [en,frio,y,en,caliente]).
+expresion_lex(condicion_motor,    ambos,       [frio,y,caliente]).
+expresion_lex(condicion_motor,    frio,        [cuando,esta,fria]).
+expresion_lex(condicion_motor,    frio,        [cuando,esta,frio]).
+expresion_lex(condicion_motor,    frio,        [por,las,mananas]).
+expresion_lex(condicion_motor,    frio,        [por,la,manana]).
+expresion_lex(condicion_motor,    frio,        [en,frio]).
+expresion_lex(condicion_motor,    caliente,    [cuando,esta,caliente]).
+expresion_lex(condicion_motor,    caliente,    [despues,de,andar]).
+expresion_lex(condicion_motor,    caliente,    [despues,de,rodar]).
+expresion_lex(condicion_motor,    caliente,    [en,caliente]).
+expresion_lex(tiempo_sin_uso,     meses,       [meses,sin,usar]).
+expresion_lex(tiempo_sin_uso,     meses,       [meses,guardada]).
+expresion_lex(tiempo_sin_uso,     meses,       [meses,parada]).
+expresion_lex(tiempo_sin_uso,     semanas,     [semanas,sin,usar]).
+expresion_lex(tiempo_sin_uso,     semanas,     [semanas,guardada]).
+expresion_lex(tiempo_sin_uso,     semanas,     [semanas,parada]).
+expresion_lex(tiempo_sin_uso,     dias,        [dias,sin,usar]).
+expresion_lex(tiempo_sin_uso,     dias,        [dias,guardada]).
+expresion_lex(tiempo_sin_uso,     dias,        [dias,parada]).
+expresion_lex(nivel_combustible,  vacio,       [se,quedo,sin,gasolina]).
+expresion_lex(nivel_combustible,  vacio,       [no,tiene,gasolina]).
+expresion_lex(nivel_combustible,  vacio,       [tanque,vacio]).
+expresion_lex(nivel_combustible,  vacio,       [sin,gasolina]).
+expresion_lex(nivel_combustible,  bajo,        [poca,gasolina]).
+expresion_lex(nivel_combustible,  bajo,        [en,reserva]).
+expresion_lex(nivel_combustible,  medio,       [tanque,a,la,mitad]).
+expresion_lex(nivel_combustible,  medio,       [medio,tanque]).
+expresion_lex(nivel_combustible,  alto,        [tanque,lleno]).
+expresion_lex(combustible_viejo,  si,          [gasolina,de,hace,meses]).
+expresion_lex(combustible_viejo,  si,          [gasolina,vieja]).
+expresion_lex(combustible_viejo,  si,          [combustible,viejo]).
+expresion_lex(combustible_viejo,  si,          [gasolina,guardada]).
+expresion_lex(combustible_viejo,  no,          [acabo,de,tanquear]).
+expresion_lex(combustible_viejo,  no,          [recien,tanqueada]).
+expresion_lex(combustible_viejo,  no,          [gasolina,nueva]).
+expresion_lex(mantenimiento_reciente, no,      [sin,mantenimiento]).
+expresion_lex(mantenimiento_reciente, no,      [mantenimiento,atrasado]).
+expresion_lex(mantenimiento_reciente, si,      [mantenimiento,al,dia]).
+expresion_lex(chispa,             ausente,     [no,hay,chispa]).
+expresion_lex(chispa,             ausente,     [no,da,chispa]).
+expresion_lex(chispa,             ausente,     [no,tiene,chispa]).
+expresion_lex(chispa,             ausente,     [sin,chispa]).
+expresion_lex(chispa,             debil,       [chispa,debil]).
+expresion_lex(chispa,             debil,       [poca,chispa]).
+expresion_lex(chispa,             adecuada,    [buena,chispa]).
+expresion_lex(chispa,             adecuada,    [chispa,buena]).
+expresion_lex(compresion,         baja,        [compresion,baja]).
+expresion_lex(compresion,         baja,        [poca,compresion]).
+expresion_lex(compresion,         baja,        [baja,compresion]).
+expresion_lex(compresion,         normal,      [compresion,normal]).
+expresion_lex(compresion,         normal,      [buena,compresion]).
+expresion_lex(bornes,             sulfatados,  [sulfato]).
+
+% unidad_lex(Variable, Palabras): unidades que siguen a un número.
+unidad_lex(cilindrada, [centimetros,cubicos]).
+unidad_lex(cilindrada, [de,cilindraje]).
+unidad_lex(cilindrada, [de,cilindrada]).
+unidad_lex(cilindrada, [c,',',c]).
+unidad_lex(cilindrada, [c,c]).
+unidad_lex(cilindrada, [cc]).
+unidad_lex(voltaje,    [voltios]).
+unidad_lex(voltaje,    [voltio]).
+unidad_lex(voltaje,    [volts]).
+unidad_lex(voltaje,    [volt]).
+unidad_lex(voltaje,    [v]).
+
+% magnitud_lex(Variable, Palabras): nombre de una medida antes del número
+% ("voltaje de 11,5", "cilindraje 150").
+magnitud_lex(voltaje,    [voltaje]).
+magnitud_lex(cilindrada, [cilindraje]).
+magnitud_lex(cilindrada, [cilindrada]).
+
+% verbo_medida_lex(Entidad, Variable, Palabras): verbos que introducen una
+% medida del sujeto ("la batería | marca 11,5", "la moto | es de 150 cc").
+verbo_medida_lex(bateria, voltaje,    [marca]).
+verbo_medida_lex(bateria, voltaje,    [tiene]).
+verbo_medida_lex(bateria, voltaje,    [da]).
+verbo_medida_lex(bateria, voltaje,    [esta,en]).
+verbo_medida_lex(moto,    cilindrada, [es,de]).
+verbo_medida_lex(moto,    cilindrada, [tiene]).
+verbo_medida_lex(moto,    cilindrada, [de]).
+
+% copula_lex(Palabras): verbos que unen el sujeto con un atributo.
+copula_lex([se,ven]).
+copula_lex([se,ve]).
+copula_lex([estan]).
+copula_lex([esta]).
+copula_lex([estaban]).
+copula_lex([estaba]).
+copula_lex([son]).
+copula_lex([es]).
+copula_lex([parecen]).
+copula_lex([parece]).
+copula_lex([quedaron]).
+copula_lex([quedo]).
+copula_lex([andan]).
+copula_lex([anda]).
+
+% intensificador_lex(Palabras): adverbios que se aceptan antes del atributo.
+intensificador_lex([un,poco]).
+intensificador_lex([muy]).
+intensificador_lex([bastante]).
+intensificador_lex([algo]).
+intensificador_lex([demasiado]).
+intensificador_lex([super]).
+
+% determinante_lex(Palabra)
+determinante_lex(el).
+determinante_lex(la).
+determinante_lex(los).
+determinante_lex(las).
+determinante_lex(mi).
+determinante_lex(mis).
+determinante_lex(su).
+determinante_lex(sus).
+determinante_lex(un).
+determinante_lex(una).
+determinante_lex(este).
+determinante_lex(esta).
+
+% verbo_reposo_lex(Palabras): introducen el tiempo sin uso ("lleva 3 meses").
+verbo_reposo_lex([llevaba]).
+verbo_reposo_lex([lleva]).
+verbo_reposo_lex([estuvo]).
+verbo_reposo_lex([paso]).
+
+% unidad_tiempo_lex(Valor, Palabra)
+unidad_tiempo_lex(meses,   meses).
+unidad_tiempo_lex(meses,   mes).
+unidad_tiempo_lex(semanas, semanas).
+unidad_tiempo_lex(semanas, semana).
+unidad_tiempo_lex(dias,    dias).
+unidad_tiempo_lex(dias,    dia).
+
+% cantidad_lex(Palabra): cantidades sin número ("varios meses").
+cantidad_lex(varios).
+cantidad_lex(varias).
+cantidad_lex(unos).
+cantidad_lex(unas).
+cantidad_lex(un).
+cantidad_lex(una).
+cantidad_lex(como).
+
+% palabra_vacia(Palabra): palabras sin contenido que no se informan como
+% "no reconocidas" cuando quedan fuera de un enunciado.
+palabra_vacia(W) :-
+    memberchk(W, [el, la, los, las, un, una, unos, unas, lo, le, les, me, se,
+                  de, del, al, a, en, con, por, para, sin, y, e, o, u, ni, que,
+                  mi, mis, su, sus, es, son, esta, estan, este, esto, eso, ese,
+                  esa, muy, mas, ya, tambien, ademas, pero, cuando, como, porque,
+                  pues, luego, despues, hoy, ayer, no, si, hay, tiene, tengo,
+                  algo, poco, bastante, vez, veces, yo, tampoco, igual, todo,
+                  toda, nada, solo, sola, apenas, creo, noto, parece, dia]).
+
+% -------------------------------------------------------------------------
+% R9.1 normalizar_texto(+Texto, -Codigos)
+% Minúsculas y sin tildes, como códigos de carácter. Acepta átomo o
+% cadena; cualquier otro término se trata como texto vacío (fallback).
+% -------------------------------------------------------------------------
+normalizar_texto(Texto, Codigos) :-
+    ( string(Texto) ; atom(Texto) ), !,
+    string_lower(Texto, Minusculas),
+    string_codes(Minusculas, C0),
+    maplist(sin_tilde, C0, Codigos).
+normalizar_texto(_, []).
+
+% CORTE + FALLBACK: si el carácter lleva tilde se reemplaza; si no, igual.
+sin_tilde(C, S) :- tilde(C, S), !.
+sin_tilde(C, C).
+
+tilde(0'á, 0'a).
+tilde(0'é, 0'e).
+tilde(0'í, 0'i).
+tilde(0'ó, 0'o).
+tilde(0'ú, 0'u).
+tilde(0'ü, 0'u).
+tilde(0'ñ, 0'n).
+
+% -------------------------------------------------------------------------
+% R9.2 tokens//1 - DCG léxica sobre los caracteres.
+% Produce palabras (átomos), números y ',' para cualquier puntuación.
+% "11,5" y "11.5" son el número 11.5; "150cc" son 150 y cc.
+% CORTE: cada token se reconoce de una sola forma.
+% -------------------------------------------------------------------------
+tokens(Ts) --> separadores, tokens_resto(Ts).
+
+tokens_resto([T|Ts]) --> token(T), !, separadores, tokens_resto(Ts).
+tokens_resto([]) --> [].
+
+token(N) --> digitos(E), !, decimales(D), { numero_tokens(E, D, N) }.
+token(P) --> letras(L), !, { atom_codes(P, L) }.
+token(',') --> [C], { puntuacion(C) }.
+
+digitos([D|Ds]) --> [D], { code_type(D, digit) }, digitos_resto(Ds).
+digitos_resto([D|Ds]) --> [D], { code_type(D, digit) }, !, digitos_resto(Ds).
+digitos_resto([]) --> [].
+
+decimales(Ds) --> [S], { memberchk(S, `,.`) }, digitos(Ds), !.
+decimales([]) --> [].
+
+letras([L|Ls]) --> [L], { letra(L) }, letras_resto(Ls).
+letras_resto([L|Ls]) --> [L], { letra(L) }, !, letras_resto(Ls).
+letras_resto([]) --> [].
+
+separadores --> [C], { \+ letra(C), \+ code_type(C, digit), \+ puntuacion(C) }, !,
+    separadores.
+separadores --> [].
+
+letra(C) :- between(0'a, 0'z, C).
+puntuacion(C) :- memberchk(C, `,.;:!?`).
+
+numero_tokens(Entera, [], N) :- !,
+    number_codes(N, Entera).
+numero_tokens(Entera, Decimal, N) :-
+    append(Entera, [0'.|Decimal], Codigos),
+    number_codes(N, Codigos).
+
+% -------------------------------------------------------------------------
+% R9.3 hallazgos//2 - análisis robusto de toda la descripción.
+% En cada posición intenta reconocer un enunciado; si no puede, salta una
+% palabra y la guarda como ignorada. CORTE: se toma el primer enunciado
+% reconocido en cada posición (el léxico ordena las formas largas antes).
+% -------------------------------------------------------------------------
+hallazgos([H|Hs], Ignoradas) --> hallazgo(H), !, hallazgos(Hs, Ignoradas).
+hallazgos(Hs, [W|Ignoradas]) --> [W], !, hallazgos(Hs, Ignoradas).
+hallazgos([], []) --> [].
+
+% hallazgo(h(Variable, Valor, Frase)): el enunciado y las palabras que lo
+% forman (para mostrar al usuario qué parte de su texto se entendió).
+hallazgo(h(V, X, Frase)) --> capturar(enunciado(V, X), Frase).
+
+% capturar(+NoTerminal, -Palabras): reconoce el no terminal y devuelve las
+% palabras que consumió.
+capturar(NoTerminal, Palabras, S0, S) :-
+    phrase(NoTerminal, S0, S),
+    append(Palabras, S, S0).
+
+% -------------------------------------------------------------------------
+% R9.4 enunciado//2 - gramática de un enunciado.
+%   enunciado --> sujeto, predicado          "las luces están débiles"
+%   enunciado --> expresión                  "huele a gasolina", "150 cc"
+%   enunciado --> predicado verbal sin sujeto "no arranca" (sujeto implícito)
+% -------------------------------------------------------------------------
+enunciado(V, X) --> sujeto(E), predicado(E, V, X).
+enunciado(V, X) --> expresion(V, X).
+enunciado(V, X) --> { sujeto_implicito(E) }, accion(E, V, X).
+
+% sujeto --> determinante opcional, sustantivo
+sujeto(E) --> determinante_opcional, sustantivo(E).
+
+determinante_opcional --> [D], { determinante_lex(D) }, !.
+determinante_opcional --> [].
+
+sustantivo(E) --> { sustantivo_lex(E, Palabras) }, Palabras.
+
+% predicado --> cópula, intensificador opcional, atributo   "está muy débil"
+% predicado --> intensificador opcional, atributo            "débiles"
+% predicado --> acción                                        "no gira"
+% predicado --> verbo de medida, número, unidad opcional      "marca 11,5 V"
+predicado(E, V, X) --> copula, intensificador_opcional, atributo(E, V, X).
+predicado(E, V, X) --> intensificador_opcional, atributo(E, V, X).
+predicado(E, V, X) --> accion(E, V, X).
+predicado(E, V, N) --> verbo_medida(E, V), numero(N), unidad_opcional(V).
+
+copula --> { copula_lex(Palabras) }, Palabras.
+
+intensificador_opcional --> { intensificador_lex(Palabras) }, Palabras, !.
+intensificador_opcional --> [].
+
+atributo(E, V, X) --> { atributo_lex(E, V, X, Palabras) }, Palabras.
+accion(E, V, X)   --> { accion_lex(E, V, X, Palabras) }, Palabras.
+verbo_medida(E, V) --> { verbo_medida_lex(E, V, Palabras) }, Palabras.
+
+% -------------------------------------------------------------------------
+% R9.5 expresion//2 - expresiones completas y medidas.
+% -------------------------------------------------------------------------
+expresion(V, X) --> { expresion_lex(V, X, Palabras) }, Palabras.
+expresion(V, N) --> numero(N), unidad(V).                          % "150 cc"
+expresion(V, N) --> { magnitud_lex(V, Palabras) }, Palabras,       % "voltaje de 11,5"
+    preposicion_opcional, numero(N), unidad_opcional(V).
+expresion(tiempo_sin_uso, U) --> { verbo_reposo_lex(Palabras) }, Palabras,  % "lleva 45 dias"
+    numero(N), [P], { unidad_tiempo_lex(Unidad, P), categoria_tiempo(N, Unidad, U) }.
+expresion(tiempo_sin_uso, U) --> { verbo_reposo_lex(Palabras) }, Palabras,  % "lleva varios meses"
+    cantidad_opcional, [P], { unidad_tiempo_lex(U, P) }.
+
+numero(N) --> [N], { number(N) }.
+
+% categoria_tiempo(+Cantidad, +Unidad, -Categoria): "45 dias" son meses.
+% Se pasa todo a días y se clasifica: < 7 días, < 30 semanas, si no meses.
+% CORTE: rangos excluyentes evaluados en orden.
+categoria_tiempo(N, Unidad, Categoria) :-
+    dias_por_unidad(Unidad, Factor),
+    Dias is N * Factor,
+    (   Dias < 7  -> Categoria = dias
+    ;   Dias < 30 -> Categoria = semanas
+    ;   Categoria = meses
+    ).
+
+dias_por_unidad(dias, 1).
+dias_por_unidad(semanas, 7).
+dias_por_unidad(meses, 30).
+
+unidad(V) --> { unidad_lex(V, Palabras) }, Palabras.
+
+unidad_opcional(V) --> unidad(V), !.
+unidad_opcional(_) --> [].
+
+preposicion_opcional --> [P], { memberchk(P, [de, en]) }, !.
+preposicion_opcional --> [].
+
+cantidad_opcional --> [N], { number(N) }, !.
+cantidad_opcional --> [C], { cantidad_lex(C) }, !.
+cantidad_opcional --> [].
+
+% -------------------------------------------------------------------------
+% R9.6 interpretar_texto(+Texto, -Observaciones, -Reconocidos, -NoReconocidas)
+% PREDICADO PÚBLICO. Analiza la descripción y devuelve:
+%   Observaciones : [obs(Variable, Valor), ...] listas para consultar/6.
+%   Reconocidos   : [[Variable, Valor, Frase, Texto, Estado], ...] donde
+%                   Frase son las palabras que lo expresaron y Estado es
+%                   aceptado, repetido (la variable ya tenía valor) o
+%                   invalido (por ejemplo, una cilindrada fuera de rango).
+%   NoReconocidas : palabras con contenido que no formaron un enunciado.
+% -------------------------------------------------------------------------
+interpretar_texto(Texto, Observaciones, Reconocidos, NoReconocidas) :-
+    normalizar_texto(Texto, Codigos),
+    phrase(tokens(Tokens), Codigos),
+    phrase(hallazgos(Hallazgos, Ignoradas), Tokens),
+    clasificar_hallazgos(Hallazgos, [], Observaciones, Reconocidos),
+    palabras_no_reconocidas(Ignoradas, NoReconocidas).
+
+% R9.7 clasificar_hallazgos(+Hallazgos, +Vistas, -Observaciones, -Reconocidos)
+% Recursión sobre la lista: el primer valor de cada variable es el que vale.
+clasificar_hallazgos([], _, [], []).
+clasificar_hallazgos([h(V, X, Frase)|Hs], Vistas, Obs, [[V, X, FraseT, Texto, Estado]|Rec]) :-
+    atomic_list_concat(Frase, ' ', FraseT),
+    describir_hecho([], V-X, Texto),
+    estado_hallazgo(V, X, Vistas, Estado),
+    (   Estado == aceptado
+    ->  Obs = [obs(V, X)|Obs1],
+        Vistas1 = [V|Vistas]
+    ;   Obs = Obs1,
+        Vistas1 = Vistas
+    ),
+    clasificar_hallazgos(Hs, Vistas1, Obs1, Rec).
+
+% CORTE: estados excluyentes en orden; FALLBACK: invalido.
+estado_hallazgo(V, _, Vistas, repetido) :- memberchk(V, Vistas), !.
+estado_hallazgo(V, X, _, aceptado) :- obs_valida(obs(V, X)), !.
+estado_hallazgo(_, _, _, invalido).
+
+% R9.8 palabras_no_reconocidas(+Ignoradas, -Palabras)
+% Palabras saltadas que no son vacías ni pertenecen al léxico.
+palabras_no_reconocidas(Ignoradas, Palabras) :-
+    findall(W,
+            ( member(W, Ignoradas), atom(W), W \== ',',
+              \+ palabra_vacia(W), \+ palabra_del_lexico(W) ),
+            P0),
+    list_to_set(P0, Palabras).
+
+% CORTE: basta con encontrarla en una entrada del léxico.
+palabra_del_lexico(W) :-
+    (   sustantivo_lex(_, Ps) ; atributo_lex(_, _, _, Ps) ; accion_lex(_, _, _, Ps)
+    ;   expresion_lex(_, _, Ps) ; unidad_lex(_, Ps)
+    ),
+    memberchk(W, Ps), !.
+
+
+/* =========================================================================
+   10. MODO EXPERTO: ADQUISICIÓN DINÁMICA DE CONOCIMIENTO
+   Un usuario con rol "Experto" crea un diagnóstico nuevo desde la
+   interfaz. Prolog valida la ficha, inyecta los hechos en memoria con
+   assertz/1 y reescribe conocimiento_aprendido.pl, que este archivo
+   incluye al final: el aprendizaje sobrevive a los reinicios.
+
+   Un diagnóstico aprendido se integra solo con todas las reglas
+   anteriores (respaldo, prioridad, preguntas, "¿Por qué?", "¿Qué falta?")
+   porque esas reglas consultan los hechos, no una lista fija de códigos.
+
+   Ficha = ficha(Nombre, Subsistema, Rama, Prioridad, Evidencias,
+                 Verificaciones, Descartes, Competidoras, Recomendaciones)
+     Evidencias, Verificaciones y Descartes: listas Variable-Valor.
+     Competidoras: códigos de diagnósticos existentes.
+     Recomendaciones: lista de textos.
+   ========================================================================= */
+
+% R10.1 ruta_aprendido(-Ruta): archivo del conocimiento aprendido.
+ruta_aprendido(Ruta) :-
+    directorio_base(Dir),
+    directory_file_path(Dir, 'conocimiento_aprendido.pl', Ruta).
+
+% R10.2 aprender_diagnostico(+Ficha, -Estado, -Codigo, -Errores)
+% PREDICADO PÚBLICO. Estado = ok (Codigo es el nuevo diagnóstico) o error
+% (Errores explica qué corregir y no se modifica nada).
+aprender_diagnostico(Ficha, Estado, Codigo, Errores) :-
+    findall(M, error_ficha(ninguno, Ficha, M), Errores),
+    (   Errores \== []
+    ->  Estado = error, Codigo = ''
+    ;   nuevo_codigo(Codigo),
+        hechos_ficha(Codigo, Ficha, Hechos),
+        forall(member(H, Hechos), assertz(H)),          % aprendizaje en memoria
+        guardar_aprendido,                               % y en el archivo .pl
+        Estado = ok
+    ).
+
+% R10.3 error_ficha(+Propio, +Ficha, -Mensaje): validación de la ficha.
+% Propio es el código del diagnóstico que se edita (ninguno al crear): su
+% propio nombre no cuenta como repetido y no puede competir consigo mismo.
+error_ficha(_, Ficha, 'La ficha no tiene la forma esperada.') :-
+    \+ ficha_bien_formada(Ficha).
+error_ficha(_, ficha(N, _, _, _, _, _, _, _, _), 'Escriba el nombre del diagnóstico.') :-
+    texto_vacio(N).
+error_ficha(Propio, ficha(N, _, _, _, _, _, _, _, _), M) :-
+    \+ texto_vacio(N),
+    normalize_space(atom(Nombre), N),
+    diagnostico(C, Nombre, _, _),
+    C \== Propio,
+    upcase_atom(C, CU),
+    format(atom(M), 'Ya existe un diagnóstico con ese nombre (~w).', [CU]).
+error_ficha(Propio, ficha(_, _, _, _, _, _, _, Comp, _), 'Un diagnóstico no puede confundirse consigo mismo.') :-
+    is_list(Comp),
+    memberchk(Propio, Comp).
+error_ficha(_, ficha(_, S, _, _, _, _, _, _, _), 'Escriba el subsistema afectado.') :-
+    texto_vacio(S).
+error_ficha(_, ficha(_, _, R, _, _, _, _, _, _), 'Elija la rama: eléctrica o motor.') :-
+    \+ memberchk(R, [electrica, motor]).
+error_ficha(_, ficha(_, _, _, P, _, _, _, _, _), 'La prioridad base debe ser un número de 1 a 4.') :-
+    \+ ( integer(P), between(1, 4, P) ).
+error_ficha(_, ficha(_, _, _, _, [], _, _, _, _), 'Indique al menos un síntoma a favor (evidencia).').
+error_ficha(_, ficha(_, _, _, _, E, Vf, D, _, _), M) :-
+    ficha_bien_formada(ficha(_, _, _, _, E, Vf, D, [], [])),
+    ( member(C, E) ; member(C, Vf) ; member(C, D) ),
+    \+ condicion_valida(C),
+    format(atom(M), 'La condición ~w no es una pregunta con un valor válido.', [C]).
+error_ficha(_, ficha(_, _, _, _, E, Vf, D, _, _), M) :-
+    ficha_bien_formada(ficha(_, _, _, _, E, Vf, D, [], [])),
+    member(C, D),
+    ( memberchk(C, E) ; memberchk(C, Vf) ),
+    describir_hecho([], C, T),
+    format(atom(M), '«~w» no puede apoyar y descartar el diagnóstico a la vez.', [T]).
+error_ficha(_, ficha(_, _, _, _, _, _, _, Comp, _), M) :-
+    is_list(Comp),
+    member(C, Comp),
+    \+ diagnostico(C, _, _, _),
+    format(atom(M), 'El diagnóstico competidor ~w no existe.', [C]).
+error_ficha(_, ficha(_, _, _, _, _, _, _, _, Recs), 'Escriba al menos una recomendación.') :-
+    is_list(Recs),
+    \+ ( member(T, Recs), \+ texto_vacio(T) ).
+
+ficha_bien_formada(ficha(_, _, _, _, E, Vf, D, Comp, Recs)) :-
+    is_list(E), is_list(Vf), is_list(D), is_list(Comp), is_list(Recs).
+
+% texto_vacio(+T): no es texto o solo tiene espacios.
+% CORTE: un término que no es atómico ya es vacío.
+texto_vacio(T) :- \+ atomic(T), !.
+texto_vacio(T) :- normalize_space(atom(A), T), A == ''.
+
+% condicion_valida(+Variable-Valor): pregunta existente y valor admitido
+% (para el voltaje, sus valores derivados bajo/normal).
+condicion_valida(V-X) :-
+    ground(V-X), atom(V),
+    variable(V, _, _, _, _),
+    (   valores_derivados(V, Xs)
+    ->  memberchk(X, Xs)
+    ;   opciones(V, Ops), memberchk(X, Ops), X \== desconocido
+    ).
+
+% R10.4 nuevo_codigo(-Codigo): siguiente código libre (d11, d12, ...).
+nuevo_codigo(Codigo) :-
+    findall(N,
+            ( diagnostico(C, _, _, _), atom_concat(d, Num, C), atom_number(Num, N) ),
+            Ns),
+    max_list(Ns, Max),
+    Siguiente is Max + 1,
+    format(atom(Codigo), 'd~|~`0t~d~2+', [Siguiente]).
+
+% R10.5 hechos_ficha(+Codigo, +Ficha, -Hechos): hechos que se inyectan.
+hechos_ficha(Cod, ficha(N, S, R, P, E, Vf, D, Comp, Recs), Hechos) :-
+    normalize_space(atom(Nombre), N),
+    normalize_space(atom(Subsistema), S),
+    get_time(Ahora),
+    format_time(atom(Fecha), '%Y-%m-%d %H:%M', Ahora),
+    findall(evidencia(Cod, V, X), member(V-X, E), HE),
+    findall(verificacion(Cod, V, X), member(V-X, Vf), HV),
+    findall(descarte(Cod, [V-X]), member(V-X, D), HD),
+    findall(compite_con(Cod, C), member(C, Comp), HC),
+    findall(recomendacion(Cod, T),
+            ( member(T0, Recs), \+ texto_vacio(T0), normalize_space(atom(T), T0) ),
+            HR),
+    append([[aprendido(Cod, Fecha), diagnostico(Cod, Nombre, Subsistema, R),
+             prioridad_base(Cod, P)], HE, HV, HD, HC, HR], Hechos).
+
+% R10.6 hecho_aprendido(+Codigo, -Hecho): hechos en memoria de un
+% diagnóstico aprendido (para guardarlo u olvidarlo).
+hecho_aprendido(C, aprendido(C, F))           :- aprendido(C, F).
+hecho_aprendido(C, diagnostico(C, N, S, R))   :- diagnostico(C, N, S, R).
+hecho_aprendido(C, prioridad_base(C, P))      :- prioridad_base(C, P).
+hecho_aprendido(C, evidencia(C, V, X))        :- evidencia(C, V, X).
+hecho_aprendido(C, verificacion(C, V, X))     :- verificacion(C, V, X).
+hecho_aprendido(C, descarte(C, L))            :- descarte(C, L).
+hecho_aprendido(C, compite_con(C, O))         :- compite_con(C, O).
+hecho_aprendido(C, recomendacion(C, T))       :- recomendacion(C, T).
+
+% R10.7 guardar_aprendido: reescribe conocimiento_aprendido.pl con todo lo
+% aprendido que hay en memoria, en este orden: preguntas (R10.12), luego
+% diagnósticos y al final reglas (R10.13), porque las reglas pueden usar
+% preguntas y diagnósticos aprendidos. setup_call_cleanup/3 garantiza que
+% el archivo se cierre aunque ocurra un error al escribir.
+guardar_aprendido :-
+    ruta_aprendido(Ruta),
+    setup_call_cleanup(open(Ruta, write, S, [encoding(utf8), newline(posix)]),
+                       escribir_aprendido(S),
+                       close(S)).
+
+escribir_aprendido(S) :-
+    format(S, ':- encoding(utf8).~n', []),
+    format(S, '% =========================================================================~n', []),
+    format(S, '% MotoExpert - Conocimiento aprendido en modo experto~n', []),
+    format(S, '% Archivo generado por guardar_aprendido/0: no lo edite a mano.~n', []),
+    format(S, '% base_conocimiento.pl lo incluye al final, de modo que estos hechos~n', []),
+    format(S, '% se cargan en cada inicio junto con la base original.~n', []),
+    format(S, '% =========================================================================~n', []),
+    forall(aprendido_variable(V, F), escribir_variable(S, V, F)),
+    forall(aprendido(C, F), escribir_diagnostico(S, C, F)),
+    % Primero el registro de cada regla (juntos, para que regla_aprendida/3
+    % quede contiguo) y después las reglas mismas.
+    (   regla_aprendida(_, _, _)
+    ->  format(S, '~n% Reglas agregadas a diagnósticos existentes~n', []),
+        forall(regla_aprendida(Id, H, F), portray_clause(S, regla_aprendida(Id, H, F))),
+        forall(regla_aprendida(_, H, _), portray_clause(S, H))
+    ;   true
+    ).
+
+% Las reglas agregadas después a un diagnóstico aprendido se escriben con
+% las demás reglas, no dentro del diagnóstico (\+ regla_aprendida/3).
+escribir_diagnostico(S, C, F) :-
+    diagnostico(C, Nombre, _, _),
+    upcase_atom(C, CU),
+    format(S, '~n% ~w - ~w (aprendido el ~w)~n', [CU, Nombre, F]),
+    forall(( hecho_aprendido(C, H), \+ regla_aprendida(_, H, _) ),
+           portray_clause(S, H)).
+
+escribir_variable(S, V, F) :-
+    variable(V, _, _, Etiqueta, _),
+    format(S, '~n% Pregunta ~w - ~w (aprendida el ~w)~n', [V, Etiqueta, F]),
+    forall(hecho_variable(V, H), portray_clause(S, H)).
+
+% R10.8 olvidar_diagnostico(+Codigo, -Estado, -Errores)
+% PREDICADO PÚBLICO. Retira con retract/1 un diagnóstico aprendido, y las
+% reglas que se le hayan agregado, y actualiza el archivo. Los diagnósticos
+% de la base original no se tocan.
+olvidar_diagnostico(Cod, Estado, Errores) :-
+    (   aprendido(Cod, _)
+    ->  findall(H, hecho_aprendido(Cod, H), Hechos),
+        forall(member(H, Hechos), retract(H)),
+        forall(( regla_aprendida(Id, H, _), arg(1, H, Cod) ),
+               retract(regla_aprendida(Id, H, _))),
+        guardar_aprendido,
+        Estado = ok, Errores = []
+    ;   Estado = error,
+        Errores = ['Solo se pueden eliminar diagnósticos aprendidos en modo experto.']
+    ).
+
+% R10.9 diagnosticos_aprendidos(-Lista)
+% PREDICADO PÚBLICO. [Codigo, Nombre, Subsistema, Rama, Prioridad, Fecha,
+% Evidencias, Recomendaciones] de cada diagnóstico aprendido.
+diagnosticos_aprendidos(Lista) :-
+    findall([C, N, S, R, P, F, Ev, Recs],
+            ( aprendido(C, F),
+              diagnostico(C, N, S, R),
+              prioridad_base(C, P),
+              findall(T, ( ( evidencia(C, V, X) ; verificacion(C, V, X) ),
+                           describir_hecho([], V-X, T) ), Ev),
+              findall(Rec, recomendacion(C, Rec), Recs) ),
+            Lista).
+
+% R10.10 condiciones_posibles(-Lista)
+% PREDICADO PÚBLICO. Todas las condiciones Variable-Valor que el experto
+% puede usar en una ficha: [[Variable, Valor, Texto], ...].
+condiciones_posibles(Lista) :-
+    findall([V, X, T],
+            ( variable(V, _, _, _, _),
+              valor_posible(V, X),
+              describir_hecho([], V-X, T) ),
+            Lista).
+
+% R10.11 catalogo_diagnosticos(-Lista)
+% PREDICADO PÚBLICO. [Codigo, Nombre, Rama, Aprendido] de todos los
+% diagnósticos, para elegir competidoras. Aprendido es si o no.
+catalogo_diagnosticos(Lista) :-
+    findall([C, N, R, A],
+            ( diagnostico(C, N, _, R),
+              (   aprendido(C, _)
+              ->  A = si
+              ;   A = no
+              ) ),
+            Lista).
+
+% -------------------------------------------------------------------------
+% R10.12 PREGUNTAS NUEVAS
+% El experto agrega una pregunta que el sistema no tenía (por ejemplo,
+% "¿Sube el voltaje al acelerar?"), con sus opciones y las frases con que
+% la gramática DCG la reconoce en una descripción. Desde ese momento la
+% pregunta aparece en el ingreso libre, se puede usar en fichas y reglas, y
+% la entrevista la hace cuando ayuda a confirmar o distinguir diagnósticos.
+%
+% Pregunta = pregunta(Etiqueta, Texto, Grupo, Tipo, Opciones, Frases)
+%   Opciones: textos de las respuestas (["Sí", "No"]).
+%   Frases  : Opcion-Frase, por ejemplo "No"-"el voltaje no sube al acelerar".
+% -------------------------------------------------------------------------
+
+% aprender_pregunta(+Pregunta, -Estado, -Variable, -Errores)
+% PREDICADO PÚBLICO. Estado = ok o error (Errores dice qué corregir).
+aprender_pregunta(Pregunta, Estado, Variable, Errores) :-
+    findall(M, error_pregunta(ninguno, Pregunta, M), Errores),
+    (   Errores \== []
+    ->  Estado = error, Variable = ''
+    ;   hechos_pregunta(Pregunta, Variable, Hechos),
+        forall(member(H, Hechos), assertz(H)),
+        guardar_aprendido,
+        Estado = ok
+    ).
+
+% error_pregunta(+Propio, +Pregunta, -Mensaje): validación de la pregunta.
+% Propio es la pregunta que se edita (ninguno al crear): su propio nombre
+% no cuenta como repetido y no puede perder respuestas que ya se usan.
+error_pregunta(_, Pregunta, 'La pregunta no tiene la forma esperada.') :-
+    \+ pregunta_bien_formada(Pregunta).
+error_pregunta(_, pregunta(E, _, _, _, _, _), 'Escriba un nombre corto para la pregunta.') :-
+    \+ identificador(E, _).
+error_pregunta(Propio, pregunta(E, _, _, _, _, _), M) :-
+    identificador(E, V),
+    V \== Propio,
+    variable(V, _, _, Etq, _),
+    format(atom(M), 'Ya existe una pregunta con ese nombre («~w»).', [Etq]).
+error_pregunta(Propio, pregunta(_, _, _, _, Ops, _), M) :-
+    Propio \== ninguno,
+    pregunta_bien_formada(pregunta(_, _, _, _, Ops, [])),
+    valores_opciones(Ops, Vs),
+    valor_en_uso(Propio, X),
+    \+ memberchk(X, Vs),
+    valor_legible(X, XL),
+    format(atom(M), 'La respuesta «~w» se usa en un diagnóstico o una regla: no se puede quitar.', [XL]).
+error_pregunta(_, pregunta(_, T, _, _, _, _), 'Escriba el texto de la pregunta.') :-
+    texto_vacio(T).
+error_pregunta(_, pregunta(_, _, G, _, _, _), 'Elija el grupo de la pregunta.') :-
+    \+ ( atom(G), grupo(G, _) ).
+error_pregunta(_, pregunta(_, _, _, T, _, _), 'Elija el tipo de pregunta.') :-
+    \+ ( atom(T), costo_tipo(T, _) ).
+error_pregunta(_, pregunta(_, _, _, _, Ops, _), 'Escriba al menos dos respuestas posibles.') :-
+    pregunta_bien_formada(pregunta(_, _, _, _, Ops, [])),
+    valores_opciones(Ops, Vs),
+    length(Vs, N), N < 2.
+error_pregunta(_, pregunta(_, _, _, _, Ops, _), 'Hay respuestas repetidas.') :-
+    pregunta_bien_formada(pregunta(_, _, _, _, Ops, [])),
+    valores_opciones(Ops, Vs),
+    sort(Vs, Unicos), length(Vs, N), length(Unicos, NU), NU < N.
+error_pregunta(_, pregunta(_, _, _, _, Ops, _), '«No lo sé» ya se agrega solo; no lo escriba como respuesta.') :-
+    pregunta_bien_formada(pregunta(_, _, _, _, Ops, [])),
+    valores_opciones(Ops, Vs),
+    memberchk(desconocido, Vs).
+error_pregunta(_, pregunta(_, _, _, _, Ops, Frases), M) :-
+    pregunta_bien_formada(pregunta(_, _, _, _, Ops, Frases)),
+    valores_opciones(Ops, Vs),
+    member(O-F, Frases),
+    (   \+ ( identificador(O, V), memberchk(V, Vs) )
+    ->  format(atom(M), 'La frase «~w» corresponde a una respuesta que no existe: «~w».', [F, O])
+    ;   frase_tokens(F, []),
+        format(atom(M), 'La frase de la respuesta «~w» está vacía.', [O])
+    ).
+
+pregunta_bien_formada(pregunta(_, _, _, _, Ops, Frases)) :-
+    is_list(Ops), is_list(Frases),
+    forall(member(F, Frases), F = _-_).
+
+% identificador(+Texto, -Atomo): "Voltaje al acelerar" -> voltaje_al_acelerar.
+% Usa el mismo análisis léxico de la DCG (R9.1 y R9.2). Falla si el texto
+% no tiene palabras.
+identificador(Texto, Atomo) :-
+    atomic(Texto),
+    normalizar_texto(Texto, Codigos),
+    phrase(tokens(Tokens), Codigos),
+    exclude(==(','), Tokens, Palabras),
+    Palabras \== [],
+    atomic_list_concat(Palabras, '_', Atomo).
+
+% valores_opciones(+Textos, -Valores): identificadores de las opciones no vacías.
+valores_opciones(Textos, Valores) :-
+    findall(V, ( member(T, Textos), identificador(T, V) ), Valores).
+
+% frase_tokens(+Frase, -Tokens): palabras de una frase para la gramática,
+% sin determinantes al inicio ("el voltaje no sube" -> [voltaje,no,sube]).
+frase_tokens(Frase, Tokens) :-
+    (   atomic(Frase)
+    ->  normalizar_texto(Frase, Codigos),
+        phrase(tokens(T0), Codigos),
+        exclude(==(','), T0, T1),
+        quitar_determinantes(T1, Tokens)
+    ;   Tokens = []
+    ).
+
+quitar_determinantes([D|Ts], Resto) :-
+    determinante_lex(D), !,
+    quitar_determinantes(Ts, Resto).
+quitar_determinantes(Ts, Ts).
+
+% hechos_pregunta(+Pregunta, -Variable, -Hechos): hechos que se inyectan.
+% El identificador sale del nombre corto; al editar se conserva el original.
+hechos_pregunta(Pregunta, V, Hechos) :-
+    Pregunta = pregunta(E, _, _, _, _, _),
+    identificador(E, V),
+    get_time(Ahora),
+    format_time(atom(Fecha), '%Y-%m-%d %H:%M', Ahora),
+    hechos_pregunta_con(V, Fecha, Pregunta, Hechos).
+
+hechos_pregunta_con(V, Fecha, pregunta(E, T, G, Tipo, Ops, Frases), Hechos) :-
+    normalize_space(atom(Etiqueta), E),
+    normalize_space(atom(Texto), T),
+    findall(X-Leg,
+            ( member(O, Ops), identificador(O, X),
+              normalize_space(atom(L0), O), downcase_atom(L0, Leg) ),
+            Pares),
+    findall(X, member(X-_, Pares), Valores),
+    append(Valores, [desconocido], Opciones),
+    findall(texto_valor_aprendido(V, X, Leg), member(X-Leg, Pares), HT),
+    findall(expresion_lex(V, X, Ws),
+            ( member(O-F, Frases), identificador(O, X), frase_tokens(F, Ws), Ws \== [] ),
+            HF),
+    append([[aprendido_variable(V, Fecha), variable(V, G, Tipo, Etiqueta, Texto),
+             opciones(V, Opciones)], HT, HF], Hechos).
+
+% hecho_variable(+Variable, -Hecho): hechos en memoria de una pregunta aprendida.
+hecho_variable(V, aprendido_variable(V, F))       :- aprendido_variable(V, F).
+hecho_variable(V, variable(V, G, T, E, P))        :- variable(V, G, T, E, P).
+hecho_variable(V, opciones(V, O))                 :- opciones(V, O).
+hecho_variable(V, texto_valor_aprendido(V, X, T)) :- texto_valor_aprendido(V, X, T).
+hecho_variable(V, expresion_lex(V, X, Ws))        :- expresion_lex(V, X, Ws).
+
+% olvidar_pregunta(+Variable, -Estado, -Errores)
+% PREDICADO PÚBLICO. Solo preguntas aprendidas y que ningún diagnóstico ni
+% regla use todavía (primero hay que eliminar lo que la usa).
+olvidar_pregunta(V, Estado, Errores) :-
+    (   \+ aprendido_variable(V, _)
+    ->  Estado = error, Errores = ['Solo se pueden eliminar preguntas aprendidas en modo experto.']
+    ;   pregunta_en_uso(V)
+    ->  Estado = error, Errores = ['Esa pregunta se usa en un diagnóstico o una regla: elimínelos primero.']
+    ;   findall(H, hecho_variable(V, H), Hechos),
+        forall(member(H, Hechos), retract(H)),
+        guardar_aprendido,
+        Estado = ok, Errores = []
+    ).
+
+% pregunta_en_uso(+Variable). CORTE: basta con un uso.
+pregunta_en_uso(V) :-
+    (   evidencia(_, V, _) ; verificacion(_, V, _) ; contraevidencia(_, V, _)
+    ;   descarte(_, L), memberchk(V-_, L)
+    ), !.
+
+% preguntas_aprendidas(-Lista)
+% PREDICADO PÚBLICO. [Variable, Etiqueta, Pregunta, NombreGrupo, Tipo,
+% Opciones, Frases, Fecha, EnUso] de cada pregunta aprendida.
+preguntas_aprendidas(Lista) :-
+    findall([V, E, P, NG, T, Ops, Frases, F, Uso],
+            ( aprendido_variable(V, F),
+              variable(V, G, T, E, P),
+              grupo(G, NG),
+              findall(Leg, texto_valor_aprendido(V, _, Leg), Ops),
+              findall(Fr, ( expresion_lex(V, X, Ws), atomic_list_concat(Ws, ' ', W),
+                            valor_legible(X, XL), format(atom(Fr), '«~w» → ~w', [W, XL]) ),
+                      Frases),
+              (   pregunta_en_uso(V) -> Uso = si ; Uso = no ) ),
+            Lista).
+
+% grupos_preguntas(-Lista): [[Grupo, Nombre], ...] para elegir el grupo.
+grupos_preguntas(Lista) :-
+    findall([G, N], grupo(G, N), Lista).
+
+% -------------------------------------------------------------------------
+% R10.14 EDICIÓN DE LO APRENDIDO
+% Corrige un diagnóstico o una pregunta aprendidos conservando su código,
+% así las reglas que los usan no se rompen. Primero se valida; solo si no
+% hay errores se retiran los hechos viejos (retract/1), se agregan los
+% nuevos (assertz/1) y se guarda el archivo. Si hay errores NO se modifica
+% nada y Errores explica qué corregir.
+% -------------------------------------------------------------------------
+
+% datos_diagnostico(+Codigo, -Datos)
+% PREDICADO PÚBLICO. Ficha actual de un diagnóstico aprendido para llenar el
+% formulario de edición: [Nombre, Subsistema, Rama, Prioridad, Evidencias,
+% Verificaciones, Descartes, Competidoras, Recomendaciones], con cada
+% condición como [Variable, Valor]. Las reglas agregadas aparte (R10.13) no
+% son parte de la ficha y se conservan al editarla.
+datos_diagnostico(C, [N, S, R, P, Ev, Vf, De, Comp, Recs]) :-
+    aprendido(C, _),
+    diagnostico(C, N, S, R),
+    prioridad_base(C, P),
+    findall([V, X], ( evidencia(C, V, X), \+ regla_aprendida(_, evidencia(C, V, X), _) ), Ev),
+    findall([V, X], ( verificacion(C, V, X), \+ regla_aprendida(_, verificacion(C, V, X), _) ), Vf),
+    findall([V, X], ( descarte(C, [V-X]), \+ regla_aprendida(_, descarte(C, [V-X]), _) ), De),
+    findall(O, compite_con(C, O), Comp),
+    findall(T, recomendacion(C, T), Recs).
+
+% editar_diagnostico(+Codigo, +Ficha, -Estado, -Errores)
+% PREDICADO PÚBLICO. Estado = ok o error. Conserva el código y la fecha.
+editar_diagnostico(C, Ficha, Estado, Errores) :-
+    (   \+ aprendido(C, _)
+    ->  Estado = error,
+        Errores = ['Solo se pueden editar diagnósticos aprendidos en modo experto.']
+    ;   findall(M, error_ficha(C, Ficha, M), E0),
+        list_to_set(E0, Errores),
+        (   Errores \== []
+        ->  Estado = error
+        ;   findall(H, ( hecho_aprendido(C, H), H \= aprendido(_, _),
+                         \+ regla_aprendida(_, H, _) ), Viejos),
+            forall(member(H, Viejos), retract(H)),
+            hechos_ficha(C, Ficha, Nuevos),
+            % La fecha original se conserva; un hecho que ya existe como
+            % regla aprendida no se duplica.
+            forall(( member(H, Nuevos), H \= aprendido(_, _), \+ call(H) ), assertz(H)),
+            guardar_aprendido,
+            Estado = ok
+        )
+    ).
+
+% datos_pregunta(+Variable, -Datos)
+% PREDICADO PÚBLICO. [Etiqueta, Texto, Grupo, Tipo, Respuestas, Frases] de
+% una pregunta aprendida, con cada frase como [Respuesta, Frase].
+datos_pregunta(V, [E, T, G, Tipo, Respuestas, Frases]) :-
+    aprendido_variable(V, _),
+    variable(V, G, Tipo, E, T),
+    findall(Leg, texto_valor_aprendido(V, _, Leg), Respuestas),
+    findall([Leg, F], ( expresion_lex(V, X, Ws), valor_legible(X, Leg),
+                        atomic_list_concat(Ws, ' ', F) ), Frases).
+
+% valor_en_uso(+Variable, -Valor): respuestas que usa un diagnóstico o una regla.
+valor_en_uso(V, X) :-
+    (   evidencia(_, V, X) ; verificacion(_, V, X) ; contraevidencia(_, V, X)
+    ;   descarte(_, L), member(V-X, L)
+    ).
+
+% editar_pregunta(+Variable, +Pregunta, -Estado, -Errores)
+% PREDICADO PÚBLICO. Estado = ok o error. Conserva el identificador, así
+% los diagnósticos y reglas que la usan siguen funcionando.
+editar_pregunta(V, Pregunta, Estado, Errores) :-
+    (   \+ aprendido_variable(V, _)
+    ->  Estado = error,
+        Errores = ['Solo se pueden editar preguntas aprendidas en modo experto.']
+    ;   findall(M, error_pregunta(V, Pregunta, M), E0),
+        list_to_set(E0, Errores),
+        (   Errores \== []
+        ->  Estado = error
+        ;   aprendido_variable(V, Fecha),
+            findall(H, hecho_variable(V, H), Viejos),
+            forall(member(H, Viejos), retract(H)),
+            hechos_pregunta_con(V, Fecha, Pregunta, Nuevos),
+            forall(member(H, Nuevos), assertz(H)),
+            guardar_aprendido,
+            Estado = ok
+        )
+    ).
+
+% -------------------------------------------------------------------------
+% R10.13 REGLAS NUEVAS SOBRE DIAGNÓSTICOS EXISTENTES
+% El experto agrega a cualquier diagnóstico (de la base o aprendido) una
+% regla lógica: que una respuesta lo apoye (evidencia), lo confirme
+% (verificacion), lo debilite (contraevidencia) o lo descarte (descarte).
+% Regla = regla(Diagnostico, Tipo, Variable-Valor)
+% -------------------------------------------------------------------------
+
+% aprender_regla(+Regla, -Estado, -Id, -Errores)
+% PREDICADO PÚBLICO. Inyecta la regla con assertz/1, la registra en
+% regla_aprendida/3 (para poder retirarla) y la guarda en el archivo.
+aprender_regla(Regla, Estado, Id, Errores) :-
+    findall(M, error_regla(Regla, M), Errores),
+    (   Errores \== []
+    ->  Estado = error, Id = ''
+    ;   Regla = regla(Cod, Tipo, Cond),
+        hecho_regla(Tipo, Cod, Cond, H),
+        nuevo_id_regla(Id),
+        get_time(Ahora),
+        format_time(atom(Fecha), '%Y-%m-%d %H:%M', Ahora),
+        assertz(H),
+        assertz(regla_aprendida(Id, H, Fecha)),
+        guardar_aprendido,
+        Estado = ok
+    ).
+
+% tipo_regla(Tipo, Texto): tipos de regla que puede crear el experto.
+tipo_regla(evidencia,       'lo apoya').
+tipo_regla(verificacion,    'lo confirma').
+tipo_regla(contraevidencia, 'lo debilita').
+tipo_regla(descarte,        'lo descarta').
+
+% hecho_regla(+Tipo, +Diagnostico, +Variable-Valor, -Hecho)
+hecho_regla(evidencia,       C, V-X, evidencia(C, V, X)).
+hecho_regla(verificacion,    C, V-X, verificacion(C, V, X)).
+hecho_regla(contraevidencia, C, V-X, contraevidencia(C, V, X)).
+hecho_regla(descarte,        C, V-X, descarte(C, [V-X])).
+
+% error_regla(+Regla, -Mensaje): validación de la regla.
+error_regla(R, 'La regla no tiene la forma esperada.') :-
+    R \= regla(_, _, _-_).
+error_regla(regla(C, _, _), 'Elija un diagnóstico existente.') :-
+    \+ ( atom(C), diagnostico(C, _, _, _) ).
+error_regla(regla(_, T, _), 'Elija qué hace la respuesta con el diagnóstico.') :-
+    \+ ( atom(T), tipo_regla(T, _) ).
+error_regla(regla(_, _, Cond), 'Elija una pregunta y una respuesta válidas.') :-
+    Cond = _-_, \+ condicion_valida(Cond).
+error_regla(regla(C, T, Cond), 'Esa regla ya existe.') :-
+    atom(C), atom(T), Cond = _-_,
+    hecho_regla(T, C, Cond, H), call(H).
+error_regla(regla(C, descarte, V-X), 'Esa respuesta ya apoya o confirma el diagnóstico; no puede también descartarlo.') :-
+    atom(C), ( evidencia(C, V, X) ; verificacion(C, V, X) ), !.
+error_regla(regla(C, T, V-X), 'Esa respuesta ya descarta el diagnóstico; no puede también apoyarlo o confirmarlo.') :-
+    memberchk(T, [evidencia, verificacion]),
+    atom(C), descarte(C, L), memberchk(V-X, L), !.
+
+% nuevo_id_regla(-Id): r1, r2, ...
+nuevo_id_regla(Id) :-
+    findall(N, ( regla_aprendida(I, _, _), atom_concat(r, NA, I), atom_number(NA, N) ), Ns),
+    max_list([0|Ns], Max),
+    Siguiente is Max + 1,
+    atom_concat(r, Siguiente, Id).
+
+% olvidar_regla(+Id, -Estado, -Errores)
+% PREDICADO PÚBLICO. Retira la regla con retract/1 y actualiza el archivo.
+olvidar_regla(Id, Estado, Errores) :-
+    (   regla_aprendida(Id, H, _)
+    ->  retract(H),
+        retract(regla_aprendida(Id, H, _)),
+        guardar_aprendido,
+        Estado = ok, Errores = []
+    ;   Estado = error, Errores = ['Esa regla no existe.']
+    ).
+
+% reglas_aprendidas(-Lista)
+% PREDICADO PÚBLICO. [Id, Diagnostico, NombreDiagnostico, Texto, Fecha].
+reglas_aprendidas(Lista) :-
+    findall([Id, C, N, Texto, F],
+            ( regla_aprendida(Id, H, F),
+              arg(1, H, C),
+              diagnostico(C, N, _, _),
+              texto_regla(H, Texto) ),
+            Lista).
+
+% texto_regla(+Hecho, -Texto): "Si «Voltaje al acelerar: no» -> lo confirma".
+texto_regla(H, Texto) :-
+    hecho_regla(Tipo, _, Cond, H),
+    tipo_regla(Tipo, Efecto),
+    describir_hecho([], Cond, T),
+    format(atom(Texto), 'Si «~w», ~w', [T, Efecto]).
+
+
+/* =========================================================================
+   CONOCIMIENTO APRENDIDO
+   Se incluye al final para que sus hechos continúen los predicados
+   dinámicos declarados al inicio del archivo.
+   ========================================================================= */
+:- include(conocimiento_aprendido).

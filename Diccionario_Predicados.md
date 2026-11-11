@@ -2,7 +2,9 @@
 
 Archivo: `base_conocimiento.pl` (SWI-Prolog 9.x o superior). Puente: `motor.py` (PySwip). Interfaz: `main.py` (Streamlit).
 
-**Versión 2 (entregable 2).** Se agregan el Módulo de Explicabilidad "¿Por qué?" (sección 6), el Módulo de Recomendación "¿Qué falta?" (sección 7), sus predicados públicos (sección 1), la validación con `ground/1` y minúsculas (R1.2 y R1.2b) y los hechos que usan (sección 8). Los predicados nuevos están marcados con **(nuevo)**.
+**Versión 2 (entregable 2).** Se agregan el Módulo de Explicabilidad "¿Por qué?" (sección 6), el Módulo de Recomendación "¿Qué falta?" (sección 7), sus predicados públicos (sección 1), la validación con `ground/1` y minúsculas (R1.2 y R1.2b) y los hechos que usan (sección 10). Los predicados del entregable 2 están marcados con **(nuevo)**.
+
+**Versión 3 (entregable 3).** Se agregan la gramática DCG para descripciones en lenguaje natural (sección 8), el modo experto con `assertz/1`, `retract/1` y persistencia en `conocimiento_aprendido.pl` (sección 9), sus predicados públicos (sección 1) y el léxico de la gramática (sección 10). Los predicados del entregable 3 están marcados con **(E3)**. El pre-procesamiento numérico opcional está en Python (`clasificador.py`) y se describe en la sección 11.
 
 **Convención de modos de instanciación**
 
@@ -37,6 +39,24 @@ Archivo: `base_conocimiento.pl` (SWI-Prolog 9.x o superior). Puente: `motor.py` 
 | `explicar_consulta/5` **(nuevo)** | `explicar_consulta(+ListaObs, -General, -Conclusiones, -Hechos, -Alternativas)` | Módulo "¿Por qué?". Devuelve la traza del razonamiento común, el árbol de reglas disparadas de cada conclusión, los hechos comprobados como verdaderos y las hipótesis alternativas descartadas, excluidas o sin evidencia crítica | `explicar()` |
 | `que_falta/5` **(nuevo)** | `que_falta(+ListaObs, -Situacion, -Mensaje, -Evaluadas, -Sugerencias)` | Módulo "¿Qué falta?". Clasifica la evidencia (`definitivo`, `empate`, `insuficiente`, `sin_hipotesis`, `fuera_de_alcance`) y propone, ordenados por peso, los datos no ingresados que más ayudan a confirmar o desempatar | `que_falta()` |
 | `catalogo_variables/1` **(nuevo)** | `catalogo_variables(-Variables)` | Variables con grupo, tipo, etiqueta, pregunta, opciones legibles y tipo de entrada. La interfaz arma sus formularios con él, sin repetir el conocimiento en Python | `catalogo()` |
+| `interpretar_texto/4` **(E3)** | `interpretar_texto(+Texto, -Observaciones, -Reconocidos, -NoReconocidas)` | Analiza una descripción en lenguaje natural con la DCG y extrae las observaciones `obs(Variable, Valor)` que alimentan a `consultar/6`. `Reconocidos` dice qué frase produjo cada dato | `interpretar()` |
+| `aprender_diagnostico/4` **(E3)** | `aprender_diagnostico(+Ficha, -Estado, -Codigo, -Errores)` | Modo experto: valida la ficha de un diagnóstico nuevo, lo inyecta con `assertz/1` y lo escribe en `conocimiento_aprendido.pl`. `Estado` es `ok` o `error` | `aprender()` |
+| `olvidar_diagnostico/3` **(E3)** | `olvidar_diagnostico(+Codigo, -Estado, -Errores)` | Modo experto: retira un diagnóstico aprendido con `retract/1` y actualiza el archivo. Los de la base original no se pueden borrar | `olvidar()` |
+| `diagnosticos_aprendidos/1` **(E3)** | `diagnosticos_aprendidos(-Lista)` | Diagnósticos agregados en modo experto, con fecha, evidencias y recomendaciones | `aprendidos()` |
+| `condiciones_posibles/1` **(E3)** | `condiciones_posibles(-Lista)` | Pares `Variable-Valor` que el experto puede usar en una ficha, con su texto legible | `condiciones_posibles()` |
+| `catalogo_diagnosticos/1` **(E3)** | `catalogo_diagnosticos(-Lista)` | Todos los diagnósticos (base y aprendidos), para elegir competidoras | `catalogo_diagnosticos()` |
+| `ruta_aprendido/1` **(E3)** | `ruta_aprendido(-Ruta)` | Ruta absoluta de `conocimiento_aprendido.pl` | `ruta_aprendido()` |
+| `aprender_pregunta/4` **(E3)** | `aprender_pregunta(+Pregunta, -Estado, -Variable, -Errores)` | Modo experto: crea una pregunta nueva con sus opciones y las frases con que la reconoce la DCG; la inyecta con `assertz/1` y la guarda | `aprender_pregunta()` |
+| `olvidar_pregunta/3` **(E3)** | `olvidar_pregunta(+Variable, -Estado, -Errores)` | Retira una pregunta aprendida que ningún diagnóstico ni regla use | `olvidar_pregunta()` |
+| `preguntas_aprendidas/1` **(E3)** | `preguntas_aprendidas(-Lista)` | Preguntas aprendidas con opciones, frases, fecha y si están en uso | `preguntas_aprendidas()` |
+| `grupos_preguntas/1` **(E3)** | `grupos_preguntas(-Lista)` | Grupos disponibles para una pregunta nueva | `grupos()` |
+| `aprender_regla/4` **(E3)** | `aprender_regla(+Regla, -Estado, -Id, -Errores)` | Modo experto: agrega a un diagnóstico existente (de la base o aprendido) una regla: la respuesta lo apoya, lo confirma, lo debilita o lo descarta | `aprender_regla()` |
+| `olvidar_regla/3` **(E3)** | `olvidar_regla(+Id, -Estado, -Errores)` | Retira una regla aprendida con `retract/1` | `olvidar_regla()` |
+| `reglas_aprendidas/1` **(E3)** | `reglas_aprendidas(-Lista)` | Reglas aprendidas con su texto ("Si «…», lo confirma") | `reglas_aprendidas()` |
+| `datos_diagnostico/2` **(E3)** | `datos_diagnostico(+Codigo, -Datos)` | Ficha actual de un diagnóstico aprendido, para llenar el formulario de edición | `datos_diagnostico()` |
+| `editar_diagnostico/4` **(E3)** | `editar_diagnostico(+Codigo, +Ficha, -Estado, -Errores)` | Corrige un diagnóstico aprendido conservando su código. Si hay errores no cambia nada | `editar_diagnostico()` |
+| `datos_pregunta/2` **(E3)** | `datos_pregunta(+Variable, -Datos)` | Datos actuales de una pregunta aprendida, para editarla | `datos_pregunta()` |
+| `editar_pregunta/4` **(E3)** | `editar_pregunta(+Variable, +Pregunta, -Estado, -Errores)` | Corrige una pregunta aprendida conservando su identificador. No permite quitar respuestas que se usan. Si hay errores no cambia nada | `editar_pregunta()` |
 
 **Estructura de cada elemento de `Resultados`** (lista posicional; `motor.py` la convierte en diccionario con `CAMPOS_RESULTADO`):
 
@@ -183,7 +203,9 @@ La traza se construye llamando a **las mismas reglas** que producen las conclusi
 | --- | --- | --- | --- | --- |
 | R8.1 | `candidatas/2` | `candidatas(+Caso, -Candidatas)` | Hipótesis activas con su respaldo: `[Rango-Codigo-Respaldo, ...]` | `findall/3` |
 | R8.2 | `situacion_evidencia/3` | `situacion_evidencia(+Caso, -Situacion, -Objetivo)` | Clasifica la evidencia y elige las hipótesis objetivo. `fuera_de_alcance`; `sin_hipotesis` (objetivo: todas las compatibles); o según R8.3 | Corte en situaciones excluyentes, `\+ hay_activas/1` |
-| R8.3 | `clasificar_situacion/5` | `clasificar_situacion(+RangoMax, +Tope, +Candidatas, -Situacion, -Objetivo)` | `definitivo` (mejor respaldo Alto; objetivo, las demás), `empate` (dos o más comparten el mejor respaldo; objetivo, las empatadas), `insuficiente` (objetivo, todas las activas) | Corte + cláusula por defecto |
+| R8.3 | `clasificar_situacion/6` **(E3, modificado)** | `clasificar_situacion(+Caso, +RangoMax, +Tope, +Candidatas, -Situacion, -Objetivo)` | `ambiguo` (dos diagnósticos que compiten están en Alto confirmados por la misma prueba; objetivo, esos dos), `definitivo` (mejor respaldo Alto; objetivo, las demás), `empate` (dos o más comparten el mejor respaldo; objetivo, las empatadas), `insuficiente` (objetivo, todas las activas) | Corte + cláusula por defecto |
+| R8.3b | `confundidas/3` **(E3)** | `confundidas(+Caso, +Tope, -Codigos)` | Diagnósticos en Alto que compiten y cuyas pruebas confirmatorias presentes son las mismas (`misma_confirmacion/3`). Dos fallas confirmadas cada una por su propia prueba no se confunden: pueden coexistir | `findall/3`, `sort/2` |
+| — | `misma_confirmacion/3`, `confirmaciones/3` | `confirmaciones(+Caso, +Diagnostico, -Lista)` | Pruebas a favor presentes en el caso y su comparación entre dos diagnósticos | `findall/3` |
 | R8.4 | `efecto_valor/5` | `efecto_valor(+Caso, +Hipotesis, +Variable, +Valor, -Efecto)` | Efecto de un dato hipotético: `confirma`, `descarta`, `contribuye_descarte`, `contradice` o `apoya` | `select/3` + `cumple_todas/2` |
 | — | `valor_posible/2` | `valor_posible(+Variable, -Valor)` | Valores que podría tomar un dato pendiente; para el voltaje, los derivados `bajo`/`normal` | Corte + `member/2` |
 | R8.5 | `peso_variable/5` | `peso_variable(+Caso, +Objetivo, +Variable, -Peso, -Efectos)` | Peso de la variable y lista `Valor-Hipotesis-Efecto`. Falla si no afecta a ninguna hipótesis objetivo | `findall/3`, `max_list/2`, `sum_list/2` |
@@ -197,7 +219,88 @@ La traza se construye llamando a **las mismas reglas** que producen las conclusi
 
 ---
 
-## 8. Hechos de la base de conocimiento
+## 8. Lenguaje natural: gramática DCG (E3)
+
+`interpretar_texto/4` convierte una descripción como *«Mi moto de 150 cc no arranca, el motor gira lento y las luces están débiles»* en `[obs(cilindrada,150), obs(dificultad_arranque,persistente), obs(giro_arranque,lento), obs(luces,debil)]`. Tiene dos niveles de gramática:
+
+1. **Léxico (R9.2):** una DCG sobre los caracteres separa palabras, números (`"11,5"` → `11.5`) y puntuación.
+2. **Sintáctico (R9.3–R9.5):** una DCG sobre las palabras reconoce enunciados:
+
+```prolog
+enunciado --> sujeto, predicado.                  % "las luces | están débiles"
+enunciado --> expresion.                          % "huele a gasolina", "150 cc"
+enunciado --> accion.                             % "no arranca" (sujeto implícito: la moto)
+sujeto    --> determinante_opcional, sustantivo.
+predicado --> copula, intensificador_opcional, atributo.   % "está muy sucio"
+predicado --> intensificador_opcional, atributo.            % "débiles"
+predicado --> accion.                                       % "no gira"
+predicado --> verbo_medida, numero, unidad_opcional.        % "marca 11,5 voltios"
+```
+
+El análisis es **robusto**: si en una posición no empieza ningún enunciado, salta una palabra y la guarda como ignorada. El vocabulario está en hechos (sección 10), así que para entender una expresión nueva basta agregar un hecho, sin tocar la gramática.
+
+| ID | Firma | Modo | Descripción funcional | Técnica |
+| --- | --- | --- | --- | --- |
+| R9.1 | `normalizar_texto/2` | `normalizar_texto(+Texto, -Codigos)` | Minúsculas y sin tildes, como códigos de carácter. Un término que no es texto se trata como vacío | Corte + cláusula por defecto |
+| — | `sin_tilde/2` | `sin_tilde(+Codigo, -Codigo)` | Reemplaza las vocales con tilde y la ñ | Corte + cláusula por defecto |
+| R9.2 | `tokens//1` | `tokens(-Tokens)` (DCG sobre códigos) | Analizador léxico: palabras (átomos), números y `','` para la puntuación | DCG + corte |
+| — | `token//1`, `digitos//1`, `decimales//1`, `letras//1`, `separadores//0` | DCG sobre códigos | Reconocen un número (con coma o punto decimal), una palabra o un signo | DCG |
+| — | `numero_tokens/3` | `numero_tokens(+Entera, +Decimal, -Numero)` | Arma el número a partir de sus dígitos | Corte |
+| R9.3 | `hallazgos//2` | `hallazgos(-Hallazgos, -Ignoradas)` (DCG sobre palabras) | Recorre toda la descripción: reconoce enunciados y salta lo demás | DCG + corte, recursión |
+| — | `hallazgo//1`, `capturar/4` | `hallazgo(-h(Variable, Valor, Frase))` | Un enunciado y las palabras que lo forman | `phrase/3` + `append/3` |
+| R9.4 | `enunciado//2` | `enunciado(-Variable, -Valor)` | Gramática del enunciado (ver arriba) | DCG |
+| — | `sujeto//1`, `predicado//3`, `copula//0`, `atributo//3`, `accion//3`, `verbo_medida//2` | DCG | Constituyentes de la oración. Cada uno consulta su hecho de léxico | DCG + léxico en hechos |
+| — | `tokens_resto//1`, `digitos_resto//1`, `letras_resto//1`, `letra/1`, `puntuacion/1` | DCG sobre códigos | Auxiliares del analizador léxico: continúan una lista de tokens, dígitos o letras y clasifican un carácter | DCG + corte |
+| — | `determinante_opcional//0`, `intensificador_opcional//0`, `preposicion_opcional//0`, `cantidad_opcional//0`, `unidad_opcional//1` | DCG sobre palabras | Partes opcionales de la oración: consumen la palabra si está y, si no, nada | Corte + cláusula vacía |
+| — | `sustantivo//1`, `numero//1`, `unidad//1` | DCG sobre palabras | Núcleo del sujeto (desde `sustantivo_lex/2`), un número y una unidad (desde `unidad_lex/2`) | DCG + léxico en hechos |
+| R9.5 | `expresion//2` | `expresion(-Variable, -Valor)` | Expresiones completas, medidas con unidad y tiempo sin uso | DCG |
+| — | `categoria_tiempo/3` | `categoria_tiempo(+Cantidad, +Unidad, -Categoria)` | "45 días" → `meses`: < 7 días, < 30 semanas, si no meses | if-then-else |
+| R9.6 | `interpretar_texto/4` | Ver sección 1 | Predicado público | `phrase/2` dos veces (léxico y sintaxis) |
+| R9.7 | `clasificar_hallazgos/4` | `clasificar_hallazgos(+Hallazgos, +Vistas, -Obs, -Reconocidos)` | Estado de cada dato: `aceptado`, `repetido` (vale el primero) o `invalido` (por ejemplo, fuera de rango) | Recursión sobre listas |
+| — | `estado_hallazgo/4` | `estado_hallazgo(+Var, +Valor, +Vistas, -Estado)` | Clasifica un dato; valida con `obs_valida/1` | Corte + cláusula por defecto |
+| R9.8 | `palabras_no_reconocidas/2` | `palabras_no_reconocidas(+Ignoradas, -Palabras)` | Palabras con contenido que no formaron un enunciado | `findall/3`, `\+` |
+| — | `palabra_del_lexico/1`, `palabra_vacia/1` | `palabra_del_lexico(+Palabra)` | Excluyen del informe las palabras del léxico y las vacías ("el", "y", "de"…) | Corte |
+
+## 9. Modo experto: adquisición dinámica de conocimiento (E3)
+
+Los predicados que el experto amplía están declarados `dynamic` al inicio de `base_conocimiento.pl`: `diagnostico/4`, `prioridad_base/2`, `evidencia/3`, `verificacion/3`, `contraevidencia/3`, `descarte/2`, `compite_con/2`, `recomendacion/2`, `variable/5`, `opciones/2` y `expresion_lex/3`. Además, tres predicados dinámicos registran lo aprendido para poder listarlo y retirarlo: `aprendido/2` (diagnóstico y fecha), `aprendido_variable/2` (pregunta y fecha), `texto_valor_aprendido/3` (texto legible de cada respuesta de una pregunta nueva) y `regla_aprendida/3` (identificador, hecho y fecha de cada regla). Sus cláusulas continúan en `conocimiento_aprendido.pl`, que la base incluye al final con `:- include(conocimiento_aprendido)`. Así el aprendizaje se carga en cada inicio.
+
+Un diagnóstico aprendido se integra solo con todas las reglas (respaldo, prioridad, preguntas, "¿Por qué?", "¿Qué falta?"), porque esas reglas consultan los hechos y no una lista fija de códigos.
+
+**Forma de la ficha:** `ficha(Nombre, Subsistema, Rama, Prioridad, Evidencias, Verificaciones, Descartes, Competidoras, Recomendaciones)`, donde `Evidencias`, `Verificaciones` y `Descartes` son listas `Variable-Valor`.
+
+| ID | Firma | Modo | Descripción funcional | Técnica |
+| --- | --- | --- | --- | --- |
+| R10.1 | `ruta_aprendido/1` | `ruta_aprendido(-Ruta)` | Archivo del conocimiento aprendido, junto a la base | `directorio_base/1` (fijado al cargar) |
+| R10.2 | `aprender_diagnostico/4` | Ver sección 1 | Valida, inyecta y guarda; si hay errores no modifica nada | `findall/3` + `assertz/1` |
+| R10.3 | `error_ficha/3` | `error_ficha(+Propio, +Ficha, -Mensaje)` | Una cláusula por cada regla de validación (`Propio` es el código que se edita, o `ninguno` al crear): nombre, subsistema, rama, prioridad 1–4, al menos una evidencia, condiciones válidas, sin contradicciones, competidoras existentes, al menos una recomendación | `\+`, `findall/3` |
+| — | `ficha_bien_formada/1`, `texto_vacio/1`, `condicion_valida/1` | Verifican la forma de la ficha, el texto y que cada condición sea una pregunta con un valor admitido | Corte |
+| R10.4 | `nuevo_codigo/1` | `nuevo_codigo(-Codigo)` | Siguiente código libre: `d11`, `d12`… | `max_list/2` |
+| R10.5 | `hechos_ficha/3` | `hechos_ficha(+Codigo, +Ficha, -Hechos)` | Lista de hechos que se inyectan, incluida la fecha en `aprendido/2` | `findall/3` |
+| R10.6 | `hecho_aprendido/2` | `hecho_aprendido(+Codigo, -Hecho)` | Hechos en memoria de un diagnóstico aprendido | — |
+| R10.7 | `guardar_aprendido/0` | `guardar_aprendido` | Reescribe `conocimiento_aprendido.pl` con todo lo aprendido | `setup_call_cleanup/3`, `portray_clause/2` |
+| — | `escribir_aprendido/1`, `escribir_diagnostico/3` | Escriben el encabezado y cada diagnóstico | `forall/2` |
+| R10.8 | `olvidar_diagnostico/3` | Ver sección 1 | Retira un diagnóstico aprendido y actualiza el archivo | `retract/1` |
+| R10.9 | `diagnosticos_aprendidos/1` | Ver sección 1 | Lista de lo aprendido | `findall/3` |
+| R10.10 | `condiciones_posibles/1` | Ver sección 1 | Pares `Variable-Valor` disponibles para la ficha | `findall/3` |
+| R10.11 | `catalogo_diagnosticos/1` | Ver sección 1 | Diagnósticos de la base y aprendidos | `findall/3` |
+| R10.12 | `aprender_pregunta/4` | Ver sección 1 | Pregunta nueva: `variable/5`, `opciones/2`, texto legible de cada respuesta y frases para la DCG (`expresion_lex/3`) | `findall/3` + `assertz/1` |
+| — | `error_pregunta/3`, `pregunta_bien_formada/1` | `error_pregunta(+Propio, +Pregunta, -Mensaje)` | Validación: nombre, texto, grupo, tipo, al menos dos respuestas, sin repetidas, sin «No lo sé» y frases de respuestas existentes | `findall/3` |
+| — | `identificador/2` | `identificador(+Texto, -Atomo)` | "Voltaje al acelerar" → `voltaje_al_acelerar`, con el mismo análisis léxico de la DCG | `phrase/2` |
+| — | `valores_opciones/2`, `frase_tokens/2`, `quitar_determinantes/2` | `frase_tokens(+Frase, -Tokens)` | Respuestas y frases como palabras para la gramática ("el voltaje no sube" → `[voltaje,no,sube]`) | Recursión sobre listas + corte |
+| — | `hechos_pregunta/3`, `hecho_variable/2`, `escribir_variable/3` | `hecho_variable(+Variable, -Hecho)` | Hechos de una pregunta aprendida: los que se inyectan, los que se guardan y los que se retiran | `findall/3` |
+| — | `olvidar_pregunta/3`, `pregunta_en_uso/1` | `pregunta_en_uso(+Variable)` | Solo se retira una pregunta que ningún diagnóstico ni regla use | Corte |
+| — | `preguntas_aprendidas/1`, `grupos_preguntas/1` | Ver sección 1 | Listados para el panel del experto | `findall/3` |
+| R10.13 | `aprender_regla/4` | Ver sección 1 | Regla nueva: la registra en `regla_aprendida/3` para poder retirarla y la guarda | `assertz/1` |
+| — | `tipo_regla/2`, `hecho_regla/4` | `hecho_regla(+Tipo, +Diag, +Variable-Valor, -Hecho)` | Tipos de regla (apoya, confirma, debilita, descarta) y el hecho que corresponde a cada uno | Hechos |
+| — | `error_regla/2` | `error_regla(+Regla, -Mensaje)` | Validación: diagnóstico y condición existentes, sin repetir una regla ni contradecir otra | Corte |
+| — | `nuevo_id_regla/1`, `olvidar_regla/3`, `reglas_aprendidas/1`, `texto_regla/2` | `nuevo_id_regla(-Id)` | Identificador `r1`, `r2`…, retiro con `retract/1` y texto legible de cada regla | `max_list/2`, `retract/1` |
+| R10.14 | `editar_diagnostico/4`, `editar_pregunta/4` | Ver sección 1 | Edición de lo aprendido: primero se valida con `error_ficha/3` o `error_pregunta/3` (que reciben el código propio, para que su nombre no cuente como repetido); solo si no hay errores se retiran los hechos viejos (`retract/1`), se agregan los nuevos (`assertz/1`) y se guarda. Las reglas agregadas aparte se conservan | `list_to_set/2`, `retract/1`, `assertz/1` |
+| — | `datos_diagnostico/2`, `datos_pregunta/2` | Ver sección 1 | Datos actuales para llenar los formularios de edición | `findall/3` |
+| — | `valor_en_uso/2` | `valor_en_uso(+Variable, -Valor)` | Respuestas que usa un diagnóstico o una regla; no se pueden quitar al editar la pregunta | — |
+| — | `hechos_pregunta_con/4` | `hechos_pregunta_con(+Variable, +Fecha, +Pregunta, -Hechos)` | Hechos de una pregunta con un identificador y una fecha dados (al editar se conservan los originales) | `findall/3` |
+
+## 10. Hechos de la base de conocimiento
 
 Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma contigua.
 
@@ -233,11 +336,52 @@ Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma c
 | `texto_efecto/2` **(nuevo)** | 5 | Redacción de cada efecto |
 | `mensaje_falta/2` **(nuevo)** | 6 | Mensaje de cada situación del módulo "¿Qué falta?" |
 
-**Total:** 280 hechos en 29 predicados y más de 150 cláusulas de regla.
+**Léxico de la gramática DCG (E3)**
+
+| Predicado | N.º de hechos | Contenido |
+| --- | --- | --- |
+| `sustantivo_lex/2` | 36 | Núcleos del sujeto: moto, motor, luces, tablero, bornes… |
+| `atributo_lex/4` | 82 | Adjetivos por entidad: "débiles", "sulfatados", "en off"… |
+| `accion_lex/4` | 108 | Predicados verbales: "no gira", "gira lento", "se apaga en el mínimo"… |
+| `sujeto_implicito/1` | 2 | De qué se habla si se omite el sujeto (moto, motor) |
+| `expresion_lex/3` | 125 | Expresiones completas: "huele a gasolina", "humo negro", "no hay fugas"… |
+| `unidad_lex/2` | 11 | Unidades: cc, voltios… |
+| `magnitud_lex/2` | 3 | "voltaje", "cilindraje" |
+| `verbo_medida_lex/3` | 7 | "marca", "es de"… |
+| `copula_lex/1` | 14 | "está", "están", "se ve"… |
+| `intensificador_lex/1` | 6 | "muy", "un poco"… |
+| `determinante_lex/1` | 12 | "el", "la", "mi"… |
+| `verbo_reposo_lex/1`, `unidad_tiempo_lex/2`, `cantidad_lex/1`, `dias_por_unidad/2` | 20 | Tiempo sin uso: "lleva 3 meses" |
+| `tilde/2` | 7 | Letras con tilde y su forma sin tilde |
+
+**Total:** 280 hechos de conocimiento en 29 predicados, 433 hechos de léxico, y más de 200 cláusulas de regla.
 
 ---
 
-## 9. Cumplimiento de los requisitos del entregable 2
+## 11. Cumplimiento de los requisitos del entregable 3
+
+| Requisito | Dónde se cumple |
+| --- | --- |
+| Entrada por lenguaje natural con una DCG en Prolog | Sección 8: `interpretar_texto/4` analiza la oración con dos DCG (léxica y sintáctica) y extrae `obs(Variable, Valor)` |
+| La oración llega desde la interfaz en Python | Pestaña «Descripción» de `main.py` → `MotorMotoExpert.interpretar()` en `motor.py` |
+| Los hechos extraídos alimentan la consulta al motor | Las observaciones aceptadas pasan a `consultar/6`, `explicar_consulta/5` y `que_falta/5` |
+| Panel exclusivo para el rol "Experto" | Barra lateral → «Modo experto» con clave (variable de entorno `MOTOEXPERT_CLAVE`, por defecto `experto`) |
+| Crear un diagnóstico o regla nueva | Panel del experto: «Nuevo diagnóstico» → `aprender_diagnostico/4`; «Nueva pregunta» → `aprender_pregunta/4`; «Nueva regla» sobre cualquier diagnóstico → `aprender_regla/4` |
+| Inyección en memoria con `assertz/1` a través de PySwip | `aprender_diagnostico/4` (R10.2) |
+| Escritura persistente en un archivo `.pl` | `guardar_aprendido/0` (R10.7) escribe `conocimiento_aprendido.pl`, que la base incluye al iniciar |
+| (Opcional) Pre-procesamiento numérico en Python | `clasificador.py`: árboles de decisión de scikit-learn convierten la temperatura del aceite (°C) en `sobrecalentamiento` y los días sin uso en `tiempo_sin_uso`. Pestaña «Mediciones» del ingreso libre |
+
+**Pre-procesamiento numérico (`clasificador.py`, Python):**
+
+| Función o clase | Descripción |
+| --- | --- |
+| `ClasificadorMedicion` | Entrena un `DecisionTreeClassifier` con una tabla de referencia `(valor, etiqueta)`. Sin scikit-learn, usa los mismos umbrales calculados como punto medio entre etiquetas distintas |
+| `ClasificadorMedicion.umbrales()` | Umbrales aprendidos: 117,5 °C para el sobrecalentamiento; 6,5 y 29,5 días para el tiempo sin uso |
+| `convertir_mediciones(mediciones)` | Devuelve las observaciones discretas para Prolog y el detalle de cada conversión. Ignora mediciones fuera de rango |
+
+---
+
+## 12. Cumplimiento de los requisitos del entregable 2
 
 | Requisito | Dónde se cumple |
 | --- | --- |
@@ -250,7 +394,7 @@ Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma c
 | Hipótesis alternativas descartadas (falta de evidencia crítica o `\+`) | R7.6 |
 | Predicado de desempate ante evidencia insuficiente | R8.1–R8.7, `que_falta/5` |
 
-## 10. Cumplimiento de los requisitos técnicos (entregable 1)
+## 13. Cumplimiento de los requisitos técnicos (entregable 1)
 
 | Requisito | Dónde se cumple |
 | --- | --- |

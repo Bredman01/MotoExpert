@@ -54,8 +54,37 @@ class ErrorMotor(Exception):
 # ---------------------------------------------------------------------------
 def _atomo(texto: str) -> str:
     """Escribe un texto como átomo de Prolog entre comillas simples."""
-    limpio = str(texto).replace("\\", "\\\\").replace("'", "\\'")
+    limpio = (str(texto).replace("\\", "\\\\").replace("'", "\\'")
+              .replace("\r", " ").replace("\n", " ").replace("\t", " "))
     return f"'{limpio}'"
+
+
+def _lista_condiciones(condiciones: Iterable[tuple[str, Any]]) -> str:
+    """[(variable, valor), ...] -> texto de Prolog [variable-valor, ...]."""
+    return "[" + ", ".join(f"{_atomo(v)}-{_termino_valor(x)}" for v, x in condiciones) + "]"
+
+
+def _lista_atomos(textos: Iterable[str]) -> str:
+    return "[" + ", ".join(_atomo(t) for t in textos) + "]"
+
+
+def _termino_ficha(ficha: dict) -> str:
+    """Ficha de diagnóstico como término ficha/9 de Prolog."""
+    return (f"ficha({_atomo(ficha['nombre'])}, {_atomo(ficha['subsistema'])}, "
+            f"{_atomo(ficha['rama'])}, {int(ficha['prioridad'])}, "
+            f"{_lista_condiciones(ficha['evidencias'])}, "
+            f"{_lista_condiciones(ficha['verificaciones'])}, "
+            f"{_lista_condiciones(ficha['descartes'])}, "
+            f"{_lista_atomos(ficha['competidoras'])}, "
+            f"{_lista_atomos(ficha['recomendaciones'])})")
+
+
+def _termino_pregunta(pregunta: dict) -> str:
+    """Pregunta nueva como término pregunta/6 de Prolog."""
+    frases = "[" + ", ".join(f"{_atomo(o)}-{_atomo(f)}" for o, f in pregunta["frases"]) + "]"
+    return (f"pregunta({_atomo(pregunta['etiqueta'])}, {_atomo(pregunta['texto'])}, "
+            f"{_atomo(pregunta['grupo'])}, {_atomo(pregunta['tipo'])}, "
+            f"{_lista_atomos(pregunta['opciones'])}, {frases})")
 
 
 def _termino_valor(valor: Any) -> str:
@@ -110,6 +139,13 @@ def lista_observaciones(observaciones: dict | Iterable[tuple[str, Any]]) -> str:
     pares = observaciones.items() if isinstance(observaciones, dict) else observaciones
     terminos = [f"obs({_atomo(var)}, {_termino_valor(val)})" for var, val in pares]
     return "[" + ", ".join(terminos) + "]"
+
+
+def _valor_python(valor) -> Any:
+    """Valor devuelto por PySwip (átomo, número o cadena) como str o número."""
+    if isinstance(valor, (int, float)):
+        return valor
+    return valor.decode("utf-8") if isinstance(valor, bytes) else str(valor)
 
 
 def _paso(paso) -> dict:
@@ -257,6 +293,164 @@ class MotorMotoExpert:
                 for v, e, p, w, pr, t, ef in sol["G"]
             ],
         }
+
+    # -- entregable 3: lenguaje natural ----------------------------------
+    def interpretar(self, texto: str) -> dict:
+        """Invoca interpretar_texto/4: la DCG convierte la descripción en observaciones."""
+        sol = self._consultar_uno(f"interpretar_texto({_atomo(texto)}, O, R, N)")
+        if sol is None:
+            raise ErrorMotor("interpretar_texto/4 no devolvió solución.")
+        reconocidos = [
+            {"variable": v, "valor": _valor_python(x), "frase": f, "texto": t, "estado": e}
+            for v, x, f, t, e in sol["R"]
+        ]
+        return {
+            "consulta": self.ultima_consulta,
+            # Las mismas observaciones que Prolog devuelve como obs(V, X): las
+            # que quedaron en estado "aceptado" (PySwip entrega obs/2 como texto).
+            "observaciones": [(r["variable"], r["valor"]) for r in reconocidos
+                              if r["estado"] == "aceptado"],
+            "reconocidos": reconocidos,
+            "no_reconocidas": list(sol["N"]),
+        }
+
+    # -- entregable 3: modo experto -------------------------------------
+    def condiciones_posibles(self) -> list[dict]:
+        """Invoca condiciones_posibles/1: pares variable-valor para una ficha."""
+        sol = self._consultar_uno("condiciones_posibles(L)")
+        return [{"variable": v, "valor": _valor_python(x), "texto": t} for v, x, t in sol["L"]] if sol else []
+
+    def catalogo_diagnosticos(self) -> list[dict]:
+        """Invoca catalogo_diagnosticos/1: todos los diagnósticos, base y aprendidos."""
+        sol = self._consultar_uno("catalogo_diagnosticos(L)")
+        return [{"codigo": c, "nombre": n, "rama": r, "aprendido": a == "si"}
+                for c, n, r, a in sol["L"]] if sol else []
+
+    def aprender(self, ficha: dict) -> dict:
+        """
+        Invoca aprender_diagnostico/4. Prolog valida la ficha, inyecta los
+        hechos con assertz/1 y los guarda en conocimiento_aprendido.pl.
+        """
+        sol = self._consultar_uno(f"aprender_diagnostico({_termino_ficha(ficha)}, E, C, Errores)")
+        if sol is None:
+            raise ErrorMotor("aprender_diagnostico/4 no devolvió solución.")
+        return {"estado": sol["E"], "codigo": sol["C"], "errores": list(sol["Errores"])}
+
+    def datos_diagnostico(self, codigo: str) -> dict | None:
+        """Invoca datos_diagnostico/2: la ficha actual, para el formulario de edición."""
+        sol = self._consultar_uno(f"datos_diagnostico({_atomo(codigo)}, D)")
+        if sol is None:
+            return None
+        n, s, r, p, ev, vf, de, comp, recs = sol["D"]
+        par = lambda c: (str(c[0]), _valor_python(c[1]))  # noqa: E731
+        return {"nombre": n, "subsistema": s, "rama": r, "prioridad": p,
+                "evidencias": [par(c) for c in ev], "verificaciones": [par(c) for c in vf],
+                "descartes": [par(c) for c in de], "competidoras": list(comp),
+                "recomendaciones": list(recs)}
+
+    def editar_diagnostico(self, codigo: str, ficha: dict) -> dict:
+        """
+        Invoca editar_diagnostico/4. Si hay errores, Prolog no cambia nada y
+        los devuelve; si no, reemplaza la ficha conservando el código.
+        """
+        sol = self._consultar_uno(
+            f"editar_diagnostico({_atomo(codigo)}, {_termino_ficha(ficha)}, E, Errores)")
+        if sol is None:
+            raise ErrorMotor("editar_diagnostico/4 no devolvió solución.")
+        return {"estado": sol["E"], "errores": list(sol["Errores"])}
+
+    def olvidar(self, codigo: str) -> dict:
+        """Invoca olvidar_diagnostico/3: retira un diagnóstico aprendido (retract/1)."""
+        sol = self._consultar_uno(f"olvidar_diagnostico({_atomo(codigo)}, E, Errores)")
+        if sol is None:
+            raise ErrorMotor("olvidar_diagnostico/3 no devolvió solución.")
+        return {"estado": sol["E"], "errores": list(sol["Errores"])}
+
+    def aprendidos(self) -> list[dict]:
+        """Invoca diagnosticos_aprendidos/1."""
+        sol = self._consultar_uno("diagnosticos_aprendidos(L)")
+        return [
+            {"codigo": c, "nombre": n, "subsistema": s, "rama": r, "prioridad": p,
+             "fecha": f, "evidencias": list(ev), "recomendaciones": list(rec)}
+            for c, n, s, r, p, f, ev, rec in sol["L"]
+        ] if sol else []
+
+    def aprender_pregunta(self, pregunta: dict) -> dict:
+        """
+        Invoca aprender_pregunta/4: una pregunta nueva con sus opciones y las
+        frases con que la reconoce la gramática DCG.
+        """
+        sol = self._consultar_uno(f"aprender_pregunta({_termino_pregunta(pregunta)}, E, V, Errores)")
+        if sol is None:
+            raise ErrorMotor("aprender_pregunta/4 no devolvió solución.")
+        return {"estado": sol["E"], "variable": sol["V"], "errores": list(sol["Errores"])}
+
+    def datos_pregunta(self, variable: str) -> dict | None:
+        """Invoca datos_pregunta/2: la pregunta actual, para el formulario de edición."""
+        sol = self._consultar_uno(f"datos_pregunta({_atomo(variable)}, D)")
+        if sol is None:
+            return None
+        e, t, g, tipo, respuestas, frases = sol["D"]
+        return {"etiqueta": e, "texto": t, "grupo": g, "tipo": tipo,
+                "opciones": list(respuestas), "frases": [(str(o), str(f)) for o, f in frases]}
+
+    def editar_pregunta(self, variable: str, pregunta: dict) -> dict:
+        """
+        Invoca editar_pregunta/4. Si hay errores, Prolog no cambia nada y los
+        devuelve; si no, reemplaza la pregunta conservando su identificador.
+        """
+        sol = self._consultar_uno(
+            f"editar_pregunta({_atomo(variable)}, {_termino_pregunta(pregunta)}, E, Errores)")
+        if sol is None:
+            raise ErrorMotor("editar_pregunta/4 no devolvió solución.")
+        return {"estado": sol["E"], "errores": list(sol["Errores"])}
+
+    def olvidar_pregunta(self, variable: str) -> dict:
+        """Invoca olvidar_pregunta/3."""
+        sol = self._consultar_uno(f"olvidar_pregunta({_atomo(variable)}, E, Errores)")
+        if sol is None:
+            raise ErrorMotor("olvidar_pregunta/3 no devolvió solución.")
+        return {"estado": sol["E"], "errores": list(sol["Errores"])}
+
+    def preguntas_aprendidas(self) -> list[dict]:
+        """Invoca preguntas_aprendidas/1."""
+        sol = self._consultar_uno("preguntas_aprendidas(L)")
+        return [
+            {"variable": v, "etiqueta": e, "pregunta": p, "grupo": g, "tipo": t,
+             "opciones": list(ops), "frases": list(fr), "fecha": f, "en_uso": uso == "si"}
+            for v, e, p, g, t, ops, fr, f, uso in sol["L"]
+        ] if sol else []
+
+    def grupos(self) -> list[dict]:
+        """Invoca grupos_preguntas/1."""
+        sol = self._consultar_uno("grupos_preguntas(L)")
+        return [{"grupo": g, "nombre": n} for g, n in sol["L"]] if sol else []
+
+    def aprender_regla(self, codigo: str, tipo: str, variable: str, valor) -> dict:
+        """Invoca aprender_regla/4: una regla nueva sobre un diagnóstico existente."""
+        regla = f"regla({_atomo(codigo)}, {_atomo(tipo)}, {_atomo(variable)}-{_termino_valor(valor)})"
+        sol = self._consultar_uno(f"aprender_regla({regla}, E, I, Errores)")
+        if sol is None:
+            raise ErrorMotor("aprender_regla/4 no devolvió solución.")
+        return {"estado": sol["E"], "id": sol["I"], "errores": list(sol["Errores"])}
+
+    def olvidar_regla(self, identificador: str) -> dict:
+        """Invoca olvidar_regla/3."""
+        sol = self._consultar_uno(f"olvidar_regla({_atomo(identificador)}, E, Errores)")
+        if sol is None:
+            raise ErrorMotor("olvidar_regla/3 no devolvió solución.")
+        return {"estado": sol["E"], "errores": list(sol["Errores"])}
+
+    def reglas_aprendidas(self) -> list[dict]:
+        """Invoca reglas_aprendidas/1."""
+        sol = self._consultar_uno("reglas_aprendidas(L)")
+        return [{"id": i, "codigo": c, "nombre": n, "texto": t, "fecha": f}
+                for i, c, n, t, f in sol["L"]] if sol else []
+
+    def ruta_aprendido(self) -> str:
+        """Ruta de conocimiento_aprendido.pl, según Prolog."""
+        sol = self._consultar_uno("ruta_aprendido(R)")
+        return str(sol["R"]) if sol else ""
 
     def consulta_libre(self, consulta: str) -> list[dict]:
         """Ejecuta cualquier consulta (uso en pruebas). Devuelve todas las soluciones."""

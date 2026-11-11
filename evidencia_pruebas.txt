@@ -1,4 +1,5 @@
-MotoExpert - Evidencia de pruebas (2026-10-23 20:29)
+MotoExpert - Evidencia de pruebas (2026-11-10 20:12)
+Base: copia de base_conocimiento.pl con el conocimiento aprendido vacío.
 
 ==============================================================================
 CASO 1: Caso Normal 1 - Diagnóstico único claro
@@ -223,7 +224,7 @@ Objetivo : Comprobar que Prolog rechaza observaciones con variables libres llega
 Entrada  : [obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)]
 Esperado : 2 inválidas; luces = debil aceptada; d01 entre los resultados.
 Consulta : consultar([obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)], E, M, R, D, I)
-Obtenido : inválidas=['obs(voltaje,_10198)', 'obs(_10220,si)']; resultados=d01(respaldo=medio, prioridad=2), d02(respaldo=medio, prioridad=2)
+Obtenido : inválidas=['obs(voltaje,_2562)', 'obs(_2584,si)']; resultados=d01(respaldo=medio, prioridad=2), d02(respaldo=medio, prioridad=2)
            hechos=['Intensidad de las luces: débil', 'Giro del motor al arrancar: lento']
 Comprobaciones:
    [OK] 2 observaciones con variables libres rechazadas por ground/1
@@ -251,5 +252,152 @@ Comprobaciones:
 Veredicto: APROBADO
 
 ==============================================================================
-RESUMEN: 15 de 15 casos aprobados.
+CASO 16: Lenguaje natural - Descripción completa con la DCG
+==============================================================================
+Objetivo : Comprobar que interpretar_texto/4 analiza una oración en español (con tildes, comas y un salto de línea) y extrae los hechos que alimentan al motor.
+Entrada  : Mi moto de 150 cc no arranca, el motor gira lento y las luces están débiles.
+No huele a gasolina y la batería marca 11,5 voltios
+Esperado : cilindrada 150, dificultad persistente, giro lento, luces débiles, sin olor a gasolina y voltaje 11,5; ninguna palabra sin reconocer; D01 con respaldo alto.
+Consulta : interpretar_texto('Mi moto de 150 cc no arranca, el motor gira lento y las luces están débiles. No huele a gasolina y la batería marca 11,5 voltios', O, R, N)
+Obtenido : cilindrada=150 ← «mi moto de 150 cc»; dificultad_arranque=persistente ← «no arranca»; giro_arranque=lento ← «el motor gira lento»; luces=debil ← «las luces estan debiles»; olor_gasolina=no ← «no huele a gasolina»; voltaje=11.5 ← «la bateria marca 11.5 voltios»
+           no reconocidas=[]
+           dictamen=d06(respaldo=bajo, prioridad=3), d10(respaldo=bajo, prioridad=3), d01(respaldo=alto, prioridad=2), d02(respaldo=medio, prioridad=2), d05(respaldo=bajo, prioridad=2), d07(respaldo=bajo, prioridad=2)
+Comprobaciones:
+   [OK] hechos extraídos = esperados
+   [OK] ninguna palabra con contenido quedó sin reconocer
+   [OK] d01 con respaldo alto a partir del texto
+Veredicto: APROBADO
+
+==============================================================================
+CASO 17: Lenguaje natural - Negaciones, sujeto omitido y expresiones
+==============================================================================
+Objetivo : Comprobar negaciones ('no hay fugas'), sujeto implícito ('a veces no arranca'), cópula con intensificador ('está muy sucio') y medidas sin unidad explícita.
+Entrada  : No hay fugas. A veces no arranca por las mañanas, da tirones y bota humo negro; el filtro de aire está muy sucio. Lleva 3 meses guardada con gasolina vieja.
+Esperado : fuga no, dificultad ocasional, condición en frío, tirones, humo negro, filtro sucio, tiempo sin uso en meses y gasolina vieja.
+Consulta : interpretar_texto('No hay fugas. A veces no arranca por las mañanas, da tirones y bota humo negro; el filtro de aire está muy sucio. Lleva 3 meses guardada con gasolina vieja.', O, R, N)
+Obtenido : fuga_combustible=no ← «no hay fugas»; dificultad_arranque=ocasional ← «a veces no arranca»; condicion_motor=frio ← «por las mananas»; tirones=si ← «da tirones»; humo=negro ← «humo negro»; filtro_aire=sucio ← «el filtro de aire esta muy sucio»; tiempo_sin_uso=meses ← «lleva 3 meses»; combustible_viejo=si ← «gasolina vieja»
+           no reconocidas=[]
+Comprobaciones:
+   [OK] hechos extraídos = esperados
+   [OK] ninguna palabra con contenido quedó sin reconocer
+Veredicto: APROBADO
+
+==============================================================================
+CASO 18: Lenguaje natural - Textos vacíos, ajenos, repetidos y fuera de rango
+==============================================================================
+Objetivo : Comprobar que la DCG no falla ni inventa hechos: un texto vacío o ajeno no produce observaciones; un dato repetido vale la primera vez; un número fuera de rango se marca inválido y no se usa.
+Entrada  : (1) ''. (2) 'quisiera saber el precio de una llanta'. (3) 'el motor no gira, el motor gira lento y la moto tiene 5000 cc'.
+Esperado : (1) y (2) sin observaciones; (2) informa 'precio' y 'llanta' como no reconocidas. (3) giro no_gira; el segundo giro repetido; 5000 cc inválido.
+Obtenido : (1) [] []
+           (2) [] no reconocidas=['quisiera', 'saber', 'precio', 'llanta']
+           (3) [('giro_arranque', 'no_gira', 'aceptado'), ('giro_arranque', 'lento', 'repetido'), ('cilindrada', 5000, 'invalido')]
+Comprobaciones:
+   [OK] (1) texto vacío: sin observaciones ni errores
+   [OK] (2) texto ajeno: sin observaciones
+   [OK] (2) informa 'precio' y 'llanta' como no reconocidas
+   [OK] (3) el primer giro vale y el segundo queda como repetido
+   [OK] (3) 5000 cc se marca inválido y no se usa
+Veredicto: APROBADO
+
+==============================================================================
+CASO 19: Modo experto - assertz/1 y persistencia en conocimiento_aprendido.pl
+==============================================================================
+Objetivo : Comprobar que aprender_diagnostico/4 valida la ficha, inyecta el diagnóstico con assertz/1, lo escribe en el archivo .pl, que un proceso de Prolog NUEVO lo carga al iniciar y que olvidar_diagnostico/3 lo retira de la memoria y del archivo.
+Entrada  : Ficha inválida; luego ficha 'Regulador de voltaje (prueba)' con evidencias luces débiles y falla intermitente, verificación voltaje bajo.
+Esperado : (1) errores sin cambios. (2) estado ok y nuevo código. (3) participa en consultar/6. (4) escrito en el archivo. (5) visible tras reiniciar Prolog. (6) olvidado de memoria y archivo; la base original no se puede borrar.
+Obtenido : ficha inválida -> error, 8 errores
+           ficha válida -> {'estado': 'ok', 'codigo': 'd11', 'errores': []}
+           dictamen con d11: d11(respaldo=alto, prioridad=3), d01(respaldo=alto, prioridad=2), d02(respaldo=medio, prioridad=2)
+           proceso nuevo de Prolog -> 'Regulador de voltaje (prueba)'
+           olvidar d11 -> ok; olvidar d01 -> error
+Comprobaciones:
+   [OK] (1) la ficha inválida se rechaza con sus errores
+   [OK] (2) la ficha válida se aprende con un código nuevo
+   [OK] (3) el diagnóstico aprendido participa en consultar/6 con respaldo alto
+   [OK] (4) queda escrito en conocimiento_aprendido.pl
+   [OK] (5) un proceso de Prolog nuevo lo carga desde el archivo
+   [OK] (6) olvidar lo retira de la memoria y deja el archivo como estaba
+   [OK] (7) un diagnóstico de la base original no se puede borrar
+Veredicto: APROBADO
+
+==============================================================================
+CASO 20: Pre-procesamiento numérico (opcional) - clasificador scikit-learn
+==============================================================================
+Objetivo : Comprobar que el clasificador convierte mediciones continuas en hechos discretos antes de enviarlos a Prolog, con umbrales aprendidos de una tabla de referencia.
+Entrada  : Temperaturas 85, 117, 118, 135 y 900 °C; días 3, 7, 29 y 45.
+Esperado : Umbrales 117,5 °C y 6,5/29,5 días; 135 °C y 45 días producen sobrecalentamiento = si y tiempo_sin_uso = meses, que activan la alerta A02.
+Obtenido : método=árbol de decisión (scikit-learn); umbral temperatura=[117.5]; umbrales días=[6.5, 29.5]
+           temperatura -> {85: [('sobrecalentamiento', 'no')], 117: [('sobrecalentamiento', 'no')], 118: [('sobrecalentamiento', 'si')], 135: [('sobrecalentamiento', 'si')]}
+           días -> {3: [('tiempo_sin_uso', 'dias')], 7: [('tiempo_sin_uso', 'semanas')], 29: [('tiempo_sin_uso', 'semanas')], 45: [('tiempo_sin_uso', 'meses')]}
+           900 °C -> [{'nombre': 'Temperatura del aceite del motor', 'valor': 900, 'unidad': '°C', 'error': 'fuera del rango 0–250'}]
+           consultar([('sobrecalentamiento', 'si'), ('tiempo_sin_uso', 'meses')]) -> a02(respaldo=no_aplica, prioridad=3), d01(respaldo=bajo, prioridad=2), d07(respaldo=bajo, prioridad=2)
+Comprobaciones:
+   [OK] el árbol aprende el umbral 117,5 °C de la tabla de referencia
+   [OK] y los umbrales 6,5 y 29,5 días
+   [OK] 117 °C -> no; 118 °C -> si
+   [OK] 3 -> dias, 7 -> semanas, 45 -> meses
+   [OK] una medición fuera de rango no produce hechos
+   [OK] los hechos discretos alimentan al motor (alerta A02)
+Veredicto: APROBADO
+
+==============================================================================
+CASO 21: Causas sin distinguir - Alto confirmado por la misma prueba
+==============================================================================
+Objetivo : Comprobar que si dos diagnósticos que compiten quedan en Alto confirmados por exactamente la misma prueba, «¿Qué falta?» informa 'ambiguo' en lugar de 'definitivo', y que no lo hace cuando cada uno tiene su propia prueba.
+Entrada  : (1) Control: giro lento, luces débiles, voltaje 11,6 y bornes sulfatados. (2) Diagnóstico aprendido 'Regulador de voltaje dañado' confirmado por voltaje bajo, con luces débiles, falla intermitente, bornes normales y voltaje 12,3.
+Esperado : (1) definitivo. (2) el regulador y D01 en Alto; situación ambiguo.
+Obtenido : control D01+D02 -> definitivo
+           con d11: dictamen=d11(respaldo=alto, prioridad=3), d01(respaldo=alto, prioridad=2)
+           ¿Qué falta? -> ambiguo; evaluadas=['d01', 'd11']
+Comprobaciones:
+   [OK] control: D01 y D02 confirmadas cada una por su propia prueba -> definitivo
+   [OK] d11 y D01 quedan en Alto
+   [OK] como las confirma la misma prueba (voltaje bajo), la situación es «ambiguo», no definitivo
+   [OK] el panel evalúa justo esas dos hipótesis
+Veredicto: APROBADO
+
+==============================================================================
+CASO 22: Modo experto - Pregunta y reglas nuevas que distinguen diagnósticos
+==============================================================================
+Objetivo : Comprobar que el experto puede crear una pregunta nueva (con sus frases para la DCG) y reglas sobre diagnósticos existentes, que el sistema las usa para distinguir causas, que persisten tras reiniciar y que se pueden retirar.
+Entrada  : Pregunta 'Voltaje al acelerar' (sí/no). Reglas: 'no' confirma el regulador, 'sí' lo descarta y 'no' descarta D01. Descripción con 'el voltaje no sube al acelerar'.
+Esperado : La pregunta se sugiere para distinguir; la DCG la reconoce; queda solo el regulador en Alto; un proceso nuevo carga todo; al final el archivo queda igual.
+Obtenido : pregunta inválida -> 6 errores
+           pregunta -> {'estado': 'ok', 'variable': 'voltaje_al_acelerar', 'errores': []}; reglas -> ['r1', 'r2', 'r3']; repetida -> error
+           sugerida por ¿Qué falta? -> voltaje_al_acelerar; entrevista pregunta -> voltaje_al_acelerar
+           DCG -> [('luces', 'debil'), ('falla_intermitente', 'si'), ('bornes', 'normal'), ('voltaje', 12.3), ('voltaje_al_acelerar', 'no')]
+           dictamen -> d11(respaldo=alto, prioridad=3); situación -> definitivo
+           proceso nuevo de Prolog -> '3 pregunta'
+           olvidar pregunta en uso -> error; tras limpiar -> ok
+Comprobaciones:
+   [OK] (1) la pregunta inválida se rechaza con sus errores
+   [OK] (2) la pregunta se crea y entra al catálogo del formulario
+   [OK] (3) las tres reglas se crean y una repetida se rechaza
+   [OK] (4) ¿Qué falta? y la entrevista sugieren la pregunta nueva para distinguir
+   [OK] (5) la DCG reconoce la frase de la pregunta nueva
+   [OK] (6) con esa respuesta queda solo d11: D01 descartada por la regla nueva
+   [OK] (7) un proceso de Prolog nuevo carga las 3 reglas y la pregunta
+   [OK] (8) una pregunta en uso no se puede borrar; limpia el archivo al final
+Veredicto: APROBADO
+
+==============================================================================
+CASO 23: Modo experto - Editar lo aprendido (y no cambiar nada si hay errores)
+==============================================================================
+Objetivo : Comprobar que un diagnóstico y una pregunta aprendidos se pueden corregir conservando su código, y que una edición inválida se rechaza con sus errores sin modificar nada.
+Entrada  : Edición inválida del diagnóstico (nombre de otro, sin subsistema, prioridad 9, compite consigo mismo) y de la pregunta (quita «No», que usa una regla). Luego ediciones válidas.
+Esperado : Los errores se informan y el archivo queda idéntico; las ediciones válidas se aplican y la regla agregada aparte se conserva.
+Obtenido : edición inválida del diagnóstico -> error: ['Ya existe un diagnóstico con ese nombre (D01).', 'Un diagnóstico no puede confundirse consigo mismo.', 'Escriba el subsistema afectado.', 'La prioridad base debe ser un número de 1 a 4.']
+           edición inválida de la pregunta -> error: ['La respuesta «no» se usa en un diagnóstico o una regla: no se puede quitar.']
+           ediciones válidas -> ok, ok; prioridad=2; recomendaciones=['Revisar el regulador de voltaje en un taller.', 'Medir la carga.']; reglas=1; frase editada -> no
+Comprobaciones:
+   [OK] (1) la edición inválida del diagnóstico se rechaza explicando cada error
+   [OK] (2) quitar una respuesta que usa una regla se rechaza
+   [OK] (3) tras los errores, lo aprendido y el archivo quedan EXACTAMENTE igual
+   [OK] (4) la edición válida cambia la prioridad y las recomendaciones, con el mismo código
+   [OK] (5) la regla agregada aparte se conserva al editar
+   [OK] (6) la pregunta editada usa sus frases nuevas
+Veredicto: APROBADO
+
+==============================================================================
+RESUMEN: 23 de 23 casos aprobados.
 ==============================================================================
