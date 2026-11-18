@@ -1,8 +1,8 @@
 # MotoExpert
 
-Sistema experto auditable ("caja blanca") para el diagnóstico preliminar de fallas en motocicletas de 100 a 250 cc, cuatro tiempos y carburador. El usuario puede **describir la falla con sus propias palabras**, responder una entrevista guiada o llenar un formulario. Un **experto** puede enseñarle diagnósticos nuevos, que el sistema conserva entre reinicios.
+Sistema experto auditable ("caja blanca") para el diagnóstico preliminar de fallas en motocicletas de 100 a 250 cc, cuatro tiempos y carburador. El usuario puede **describir la falla con sus propias palabras**, responder una entrevista guiada o llenar un formulario. Un **experto** puede enseñarle diagnósticos nuevos, que el sistema conserva entre reinicios. Si los datos se **contradicen**, el sistema lo detecta con reglas de consistencia y **bloquea el diagnóstico** hasta que se corrijan.
 
-El conocimiento, la inferencia, la gramática del lenguaje natural, la traza de explicación, las recomendaciones y el aprendizaje están en SWI-Prolog. Python ofrece la interfaz web (Streamlit), limpia las entradas, presenta los resultados y, de forma opcional, convierte mediciones numéricas en datos discretos.
+El conocimiento, la inferencia, la gramática del lenguaje natural, las reglas de consistencia, la traza de explicación, las recomendaciones y el aprendizaje están en SWI-Prolog. Python ofrece la interfaz web (Streamlit), limpia las entradas, presenta los resultados y, de forma opcional, convierte mediciones numéricas en datos discretos.
 
 **Autor:** Bredman Estiven Velez Cortez — Ingeniería de Software
 
@@ -12,12 +12,14 @@ El conocimiento, la inferencia, la gramática del lenguaje natural, la traza de 
 | --- | --- |
 | `main.py` | Interfaz web en Streamlit: descripción en lenguaje natural, entrevista guiada, ingreso libre, dictamen, «¿Qué falta?», auditoría «¿Por qué?» y panel del experto |
 | `motor.py` | Controlador PySwip: carga la base, envía los datos y el texto a Prolog, y devuelve los resultados como diccionarios |
-| `base_conocimiento.pl` | Base de conocimiento comentada. Secciones 9 (gramática DCG) y 10 (modo experto) del entregable 3 |
+| `base_conocimiento.pl` | Base de conocimiento comentada. Secciones 9 (gramática DCG) y 10 (modo experto) del entregable 3; sección 11 (reglas de consistencia) del entregable 4 |
 | `conocimiento_aprendido.pl` | Diagnósticos agregados en modo experto. Lo genera Prolog y la base lo carga al iniciar |
 | `clasificador.py` | Pre-procesamiento numérico opcional con scikit-learn |
-| `Diccionario_Predicados.md` | Firma, modo y descripción de cada predicado, incluidos los del entregable 3 |
+| `Diccionario_Predicados.md` | Firma, modo y descripción de cada predicado, incluidos los de los entregables 3 y 4 |
 | `estilos.css`, `.streamlit/config.toml`, `icono.svg` | Diseño de la interfaz. Entréguelos junto a `main.py` |
-| `pruebas.py`, `evidencia_pruebas.txt` | 23 casos de prueba y su evidencia de ejecución |
+| `pruebas.py`, `evidencia_pruebas.txt` | 26 casos de prueba y su evidencia de ejecución |
+| `pruebas_estres.py`, `evidencia_estres.txt`, `resumen_estres.json` | Pruebas de estrés del manejo de contradicciones (entregable 4) y sus resultados |
+| `Informe_Tecnico_MotoExpert.pdf` | Informe técnico: arquitectura final, árbol lógico y reporte de las pruebas de estrés |
 | `consola.py` | Versión por consola del entregable 1 (opcional, sin navegador) |
 
 ## Requisitos
@@ -58,6 +60,18 @@ La columna **Captura** tiene tres formas de ingresar los datos. Todas envían a 
 2. **Entrevista guiada.** Prolog elige cada pregunta según las respuestas anteriores y explica por qué la hace. «← Volver a la pregunta anterior» deshace la última respuesta.
 3. **Ingreso libre.** El formulario completo, organizado en pestañas por grupo. La pestaña **«Mediciones»** acepta la temperatura del aceite (°C) y los días sin uso: un clasificador los convierte en los datos que usa el sistema.
 
+### Datos incompatibles (entregable 4)
+
+Antes de diagnosticar, Prolog revisa que los datos puedan ser ciertos a la vez. Si no pueden serlo, aparece el aviso **«Datos incompatibles: diagnóstico bloqueado»** con la regla que se incumplió, los datos que chocan y por qué. El dictamen queda en **«Diagnóstico bloqueado»** y solo se mantienen las alertas de seguridad.
+
+Ejemplos para probarlo:
+
+- **Descripción:** *«Mi moto de 150 cc arranca bien pero a veces no arranca»*. Es la misma pregunta con dos respuestas (C00).
+- **Ingreso libre:** marque «Sobrecalentamiento: No» y escriba 135 °C en «Mediciones». La medición contradice lo marcado (C00), y la alerta de sobrecalentamiento se mantiene.
+- **Ingreso libre:** «Dificultad para encender: No» con «Giro del motor: No gira» (C01), o «Voltaje en reposo: 3» con «Tablero: Sí» (C07).
+
+Para corregir, responda de nuevo el dato que aparece en «¿Qué falta?» o en la entrevista, cámbielo en el ingreso libre o use «Deshacer». La barra lateral marca con ⚠ los datos en conflicto. Las nueve reglas (C01 a C09) son hechos `incompatibles/3`, así que agregar una regla nueva es agregar un hecho.
+
 A la derecha aparecen el **Dictamen** (alertas, verificaciones básicas y diagnósticos con su respaldo y prioridad) y **¿Qué falta?** (el dato pendiente que más ayuda a confirmar o desempatar). Abajo, **¿Por qué?** muestra las reglas disparadas, los hechos comprobados y las hipótesis descartadas.
 
 ### Modo experto
@@ -78,7 +92,8 @@ Con el interruptor «Ver panel del experto» se vuelve a la vista de diagnóstic
 ### Otras formas de ejecutar
 
 ```
-python pruebas.py      # 23 casos; genera evidencia_pruebas.txt
+python pruebas.py      # 26 casos; genera evidencia_pruebas.txt
+python pruebas_estres.py   # estrés de contradicciones; genera evidencia_estres.txt
 python consola.py      # entrevista por consola
 ```
 
@@ -89,6 +104,7 @@ Consulta directa en Prolog:
 ?- interpretar_texto("el motor gira lento y las luces estan debiles", Obs, Rec, NoRec).
 ?- explicar_consulta([obs(giro_arranque, lento), obs(luces, debil)], G, C, H, A).
 ?- que_falta([obs(giro_arranque, lento), obs(luces, debil)], S, M, E, Sug).
+?- inconsistencias([obs(dificultad_arranque, no), obs(giro_arranque, no_gira)], I).
 ```
 
 ## Arquitectura
@@ -110,10 +126,11 @@ base_conocimiento.pl
    ├─ 8. Recomendación: que_falta/5
    ├─ 9. Lenguaje natural: interpretar_texto/4 (gramática DCG)
    ├─ 10. Modo experto: aprender_diagnostico/4, aprender_pregunta/4, aprender_regla/4
+   ├─ 11. Consistencia: inconsistencias/2 (bloquea consultar/6 si los datos chocan)
    └─ :- include(conocimiento_aprendido)   ← lo aprendido se carga al iniciar
 ```
 
-Prolog no usa `read/1`. En cada recarga de la página recibe la lista completa de observaciones; solo el modo experto modifica la base, con `assertz/1` y `retract/1`.
+Prolog no usa `read/1`. En cada recarga de la página recibe la lista completa de observaciones; solo el modo experto modifica la base, con `assertz/1` y `retract/1`. Las reglas de consistencia se evalúan sobre esa lista **antes** de quitar las respuestas repetidas, así que también detectan dos respuestas distintas a la misma pregunta.
 
 ## Problemas frecuentes
 
@@ -125,5 +142,6 @@ Prolog no usa `read/1`. En cada recarga de la página recibe la lista completa d
 | PySwip no encuentra `libswipl` | Use Python y SWI-Prolog de 64 bits y reinicie la terminal |
 | "No se encontró la base de conocimiento" | Ejecute desde la carpeta que contiene `base_conocimiento.pl` |
 | Error al cargar `conocimiento_aprendido.pl` | El archivo debe estar junto a la base. Si se dañó, reemplácelo por uno con solo la línea `:- encoding(utf8).` |
+| Aparece «Diagnóstico bloqueado» | Dos datos se contradicen. Lea el aviso rojo de la columna Captura, corrija el dato marcado con ⚠ o use «Deshacer» |
 | La descripción no reconoce una frase | Pruebe con frases cortas y directas («el motor gira lento»). Las palabras no reconocidas se listan debajo del resultado |
 | Aviso "Failed to stop Prolog threads" al cerrar | Es un mensaje de PySwip al terminar el proceso; no afecta los resultados |

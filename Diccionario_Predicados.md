@@ -6,6 +6,8 @@ Archivo: `base_conocimiento.pl` (SWI-Prolog 9.x o superior). Puente: `motor.py` 
 
 **Versión 3 (entregable 3).** Se agregan la gramática DCG para descripciones en lenguaje natural (sección 8), el modo experto con `assertz/1`, `retract/1` y persistencia en `conocimiento_aprendido.pl` (sección 9), sus predicados públicos (sección 1) y el léxico de la gramática (sección 10). Los predicados del entregable 3 están marcados con **(E3)**. El pre-procesamiento numérico opcional está en Python (`clasificador.py`) y se describe en la sección 11.
 
+**Versión 4 (entregable 4).** Se agregan las **reglas de consistencia** (sección 11 de este documento y del `.pl`): nueve hechos `incompatibles/3` del dominio y la regla C00 (dos respuestas distintas para la misma pregunta). Si los datos son lógicamente incompatibles, `consultar/6` responde `inconsistente` y **bloquea el diagnóstico antes de emitirlo**; solo se mantienen las alertas de seguridad. `que_falta/5`, `siguiente_pregunta/2`, `por_que_pregunta/3` y `explicar_consulta/5` piden corregir la respuesta y muestran la regla que bloqueó. Los predicados del entregable 4 están marcados con **(E4)**.
+
 **Convención de modos de instanciación**
 
 - `+Arg`: entrada; debe llegar instanciado (por ejemplo, la lista enviada desde Python).
@@ -57,6 +59,7 @@ Archivo: `base_conocimiento.pl` (SWI-Prolog 9.x o superior). Puente: `motor.py` 
 | `editar_diagnostico/4` **(E3)** | `editar_diagnostico(+Codigo, +Ficha, -Estado, -Errores)` | Corrige un diagnóstico aprendido conservando su código. Si hay errores no cambia nada | `editar_diagnostico()` |
 | `datos_pregunta/2` **(E3)** | `datos_pregunta(+Variable, -Datos)` | Datos actuales de una pregunta aprendida, para editarla | `datos_pregunta()` |
 | `editar_pregunta/4` **(E3)** | `editar_pregunta(+Variable, +Pregunta, -Estado, -Errores)` | Corrige una pregunta aprendida conservando su identificador. No permite quitar respuestas que se usan. Si hay errores no cambia nada | `editar_pregunta()` |
+| `inconsistencias/2` **(E4)** | `inconsistencias(+ListaObs, -Inconsistencias)` | Todas las incompatibilidades de los datos, como `[Id, Titulo, Explicacion, Hechos, Variables]`; `[]` si los datos son coherentes. La interfaz las muestra y marca los datos que chocan | `inconsistencias()` |
 
 **Estructura de cada elemento de `Resultados`** (lista posicional; `motor.py` la convierte en diccionario con `CAMPOS_RESULTADO`):
 
@@ -80,7 +83,9 @@ Archivo: `base_conocimiento.pl` (SWI-Prolog 9.x o superior). Puente: `motor.py` 
 
 **Elementos de `Descartadas`:** `[Codigo, Nombre, Motivo]`.
 
-**Valores de `Estado`:** `con_resultados`, `datos_insuficientes`, `sin_diagnostico_concluyente`, `fuera_de_alcance` o `sin_datos`.
+**Valores de `Estado`:** `con_resultados`, `datos_insuficientes`, `sin_diagnostico_concluyente`, `fuera_de_alcance`, `sin_datos` o `inconsistente` **(E4)**: los datos son incompatibles, `Resultados` solo trae alertas de seguridad y `Descartadas` queda vacía.
+
+**Situaciones de `que_falta/5`:** además de las del entregable 2 y `ambiguo` (E3), `inconsistente` **(E4)**: `Evaluadas` queda vacía y `Sugerencias` son las respuestas que hay que revisar, la más reciente primero.
 
 **Estructuras de `explicar_consulta/5`:**
 
@@ -256,7 +261,7 @@ El análisis es **robusto**: si en una posición no empieza ningún enunciado, s
 | R9.5 | `expresion//2` | `expresion(-Variable, -Valor)` | Expresiones completas, medidas con unidad y tiempo sin uso | DCG |
 | — | `categoria_tiempo/3` | `categoria_tiempo(+Cantidad, +Unidad, -Categoria)` | "45 días" → `meses`: < 7 días, < 30 semanas, si no meses | if-then-else |
 | R9.6 | `interpretar_texto/4` | Ver sección 1 | Predicado público | `phrase/2` dos veces (léxico y sintaxis) |
-| R9.7 | `clasificar_hallazgos/4` | `clasificar_hallazgos(+Hallazgos, +Vistas, -Obs, -Reconocidos)` | Estado de cada dato: `aceptado`, `repetido` (vale el primero) o `invalido` (por ejemplo, fuera de rango) | Recursión sobre listas |
+| R9.7 | `clasificar_hallazgos/4` | `clasificar_hallazgos(+Hallazgos, +Vistas, -Obs, -Reconocidos)` | Estado de cada dato: `aceptado`, `repetido` (mismo valor ya dicho), `contradictorio` **(E4)** (otro valor para una pregunta ya respondida; se entrega para que la regla C00 bloquee el diagnóstico) o `invalido` (por ejemplo, fuera de rango) | Recursión sobre listas |
 | — | `estado_hallazgo/4` | `estado_hallazgo(+Var, +Valor, +Vistas, -Estado)` | Clasifica un dato; valida con `obs_valida/1` | Corte + cláusula por defecto |
 | R9.8 | `palabras_no_reconocidas/2` | `palabras_no_reconocidas(+Ignoradas, -Palabras)` | Palabras con contenido que no formaron un enunciado | `findall/3`, `\+` |
 | — | `palabra_del_lexico/1`, `palabra_vacia/1` | `palabra_del_lexico(+Palabra)` | Excluyen del informe las palabras del léxico y las vacías ("el", "y", "de"…) | Corte |
@@ -300,6 +305,45 @@ Un diagnóstico aprendido se integra solo con todas las reglas (respaldo, priori
 | — | `valor_en_uso/2` | `valor_en_uso(+Variable, -Valor)` | Respuestas que usa un diagnóstico o una regla; no se pueden quitar al editar la pregunta | — |
 | — | `hechos_pregunta_con/4` | `hechos_pregunta_con(+Variable, +Fecha, +Pregunta, -Hechos)` | Hechos de una pregunta con un identificador y una fecha dados (al editar se conservan los originales) | `findall/3` |
 
+## 9b. Reglas de consistencia (E4)
+
+Sección 11 de `base_conocimiento.pl`. Antes de diagnosticar, el sistema comprueba que los datos no sean lógicamente incompatibles. Hay dos fuentes:
+
+- **C00:** la misma pregunta recibió dos respuestas distintas. Pasa, por ejemplo, con una descripción que dice «arranca bien» y «a veces no arranca», o con «Sobrecalentamiento: no» marcado junto a una medición de aceite de 135 °C.
+- **C01 a C09:** hechos `incompatibles(Id, Condiciones, Explicacion)`, combinaciones de respuestas que no pueden darse en una misma moto.
+
+| Id | Condiciones incompatibles | Por qué |
+| --- | --- | --- |
+| C01 | Dificultad para encender = no · Giro = no gira | Si el motor no gira, no puede encender sin dificultad |
+| C02 | Dificultad para encender = no · Interruptor = OFF | Con el interruptor en OFF el motor no enciende |
+| C03 | Dificultad para encender = no · Nivel de combustible = vacío | Con el tanque vacío el motor no enciende |
+| C04 | Nivel de combustible = vacío · Combustible viejo = sí | Sin combustible en el tanque no hay combustible viejo |
+| C05 | Fusible principal = fundido · Tablero = sí | Sin fusible no llega corriente al tablero |
+| C06 | Tablero = no · Luces = apagadas · Clic al arrancar = sí | Sin alimentación eléctrica el relé no hace clic |
+| C07 | Voltaje en reposo < 6 V · Tablero = sí | Con la batería casi a cero el tablero no enciende |
+| C08 | Voltaje en reposo < 6 V · Luces = normal | Con la batería casi a cero las luces no tienen intensidad normal |
+| C09 | Voltaje en reposo ≥ 14 V | Una batería de 12 V en reposo no supera unos 13,5 V |
+
+**Bloqueo:** si hay al menos una incompatibilidad, la primera cláusula de `consultar/6` responde `inconsistente`, y su **corte** impide llegar a la cláusula que diagnostica. Las alertas de seguridad se mantienen, y se activan si *cualquiera* de los valores informados las dispara: ante la duda, se avisa del riesgo.
+
+| ID | Firma | Modo | Descripción funcional | Técnica |
+| --- | --- | --- | --- | --- |
+| R11.1 | `cumple_condicion/2` | `cumple_condicion(+Caso, +Condicion)` | `Variable-Valor` con `hecho_caso/3`; `rango(Variable, Min, Max)` exige un valor numérico medido con Min ≤ Valor < Max | Corte entre formas excluyentes |
+| — | `texto_condicion/3`, `variable_condicion/2` | `texto_condicion(+Caso, +Condicion, -Texto)` | Texto legible con el valor que dio el usuario («Voltaje en reposo: 3.2 V») y variable de la condición | Corte |
+| R11.2 | `respuestas_en_conflicto/3` | `respuestas_en_conflicto(+Lista, -Variable, -Valores)` | Regla C00. Sobre la lista recibida, **antes** de quitar repetidas, busca variables con dos o más valores válidos distintos. `desconocido` no contradice a nadie | Procesamiento de listas, `list_to_set/2` |
+| R11.3 | `inconsistencia/2` | `inconsistencia(+Lista, -Inconsistencia)` | Cada incompatibilidad: `[Id, Titulo, Explicacion, Hechos, Variables]`. Una cláusula para C00 y otra para los hechos `incompatibles/3`, que deben cumplirse todos | `forall/2` sobre la lista de condiciones |
+| R11.4 | `inconsistencias/2` | Ver sección 1 | Predicado público: todas las incompatibilidades | `findall/3` |
+| — | `datos_inconsistentes/1` | `datos_inconsistentes(+Lista)` | Basta una incompatibilidad para bloquear | Corte |
+| R11.5 | `sugerencias_revision/2` | `sugerencias_revision(+Lista, -Sugerencias)` | «¿Qué falta?» con datos incompatibles: las respuestas por revisar, con el formato de R8.6, la más reciente primero | `findall/3` |
+| — | `variables_por_recencia/2` | `variables_por_recencia(+Lista, -Variables)` | Variables de la lista, de la más reciente a la más antigua, sin repetir | `reverse/2`, `list_to_set/2` |
+| R11.6 | `variable_a_revisar/2`, `motivo_revision/3` | `variable_a_revisar(+Lista, -Variable)` | La entrevista guiada vuelve a preguntar la respuesta en conflicto y explica la contradicción («Consistencia: …») | Corte |
+| R11.7 | `alertas_prudentes/2`, `alerta_prudente/2` | `alertas_prudentes(+Lista, -Alertas)` | Alertas de seguridad que se mantienen con datos incompatibles | `setof/3`, `memberchk/2` |
+| R11.8 | `paso_bloqueo/3` | `paso_bloqueo(+Lista, +Caso, -Paso)` | Traza «¿Por qué?» de una consulta bloqueada: normalización, regla de consistencia, hechos que chocan y bloqueo | Disyunción dentro de `findall/3` |
+
+**Cambios en predicados existentes:** `consultar/6`, `que_falta/5`, `explicar_consulta/5`, `siguiente_pregunta/2` y `por_que_pregunta/3` tienen una primera cláusula con corte para el caso inconsistente. En `estado_hallazgo/4`, la DCG distingue `repetido` (mismo valor) de `contradictorio` (otro valor).
+
+**En la interfaz:** un aviso rojo «Datos incompatibles: diagnóstico bloqueado» muestra cada regla con los hechos que chocan. La barra lateral marca con ⚠ los datos en conflicto, y «¿Qué falta?» y la entrevista piden la respuesta por revisar. Al corregirla, el diagnóstico se desbloquea solo.
+
 ## 10. Hechos de la base de conocimiento
 
 Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma contigua.
@@ -330,11 +374,13 @@ Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma c
 | `orden_tipo/2` | 3 | Orden de los tipos de conclusión en el reporte |
 | `rango_respaldo/2` | 4 | Orden de los niveles de respaldo |
 | `texto_valor/2` | 9 | Forma legible de algunos valores |
-| `mensaje_estado/2` | 5 | Mensaje de cada estado de la consulta |
+| `mensaje_estado/2` | 6 | Mensaje de cada estado de la consulta |
 | `valores_derivados/2` **(nuevo)** | 1 | Valores cualitativos deducidos del voltaje |
 | `peso_efecto/2` **(nuevo)** | 5 | Peso de cada efecto de un dato pendiente |
 | `texto_efecto/2` **(nuevo)** | 5 | Redacción de cada efecto |
-| `mensaje_falta/2` **(nuevo)** | 6 | Mensaje de cada situación del módulo "¿Qué falta?" |
+| `mensaje_falta/2` **(nuevo)** | 8 | Mensaje de cada situación del módulo "¿Qué falta?" |
+| `incompatibles/3` **(E4)** | 9 | Reglas de consistencia: condiciones que no pueden darse a la vez |
+| `texto_incompatible/2` **(E4)** | 10 | Nombre corto de cada regla de consistencia (C00 a C09) |
 
 **Léxico de la gramática DCG (E3)**
 
@@ -354,9 +400,19 @@ Todos los predicados de hechos tienen aridad ≥ 2 y están agrupados de forma c
 | `verbo_reposo_lex/1`, `unidad_tiempo_lex/2`, `cantidad_lex/1`, `dias_por_unidad/2` | 20 | Tiempo sin uso: "lleva 3 meses" |
 | `tilde/2` | 7 | Letras con tilde y su forma sin tilde |
 
-**Total:** 280 hechos de conocimiento en 29 predicados, 433 hechos de léxico, y más de 200 cláusulas de regla.
+**Total:** 301 hechos de conocimiento en 31 predicados (280 hasta el entregable 3, más las 9 reglas de consistencia, sus 10 nombres y 2 mensajes nuevos), 433 hechos de léxico y más de 200 cláusulas de regla.
 
 ---
+
+## 10b. Cumplimiento de los requisitos del entregable 4
+
+| Requisito | Dónde se cumple |
+| --- | --- |
+| Reglas de consistencia del dominio integradas en el sistema | Hechos `incompatibles/3` (C01 a C09) y regla C00 `respuestas_en_conflicto/3`; sección 11 del `.pl` |
+| Detectar hechos lógicamente incompatibles | `inconsistencia/2` (R11.3) comprueba cada regla sobre los datos, incluidas condiciones numéricas (`rango/3`, voltaje) y datos que llegan por texto (DCG) o por medición (clasificador) |
+| Alertar al usuario | Aviso «Datos incompatibles: diagnóstico bloqueado» con los hechos que chocan y la explicación; ⚠ en la barra lateral; «¿Qué falta?» y la entrevista piden corregir |
+| Bloquear antes de emitir un diagnóstico erróneo | Primera cláusula de `consultar/6` con corte: estado `inconsistente`, sin diagnósticos ni verificaciones básicas. Solo se mantienen las alertas de seguridad (R11.7) |
+| Evidencia | Casos 24, 25 y 26 de `pruebas.py` (`evidencia_pruebas.txt`) |
 
 ## 11. Cumplimiento de los requisitos del entregable 3
 

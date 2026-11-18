@@ -137,6 +137,28 @@
 .mx-aviso-ir:focus-visible { outline: 2px solid var(--alta); outline-offset: 2px; border-radius: 2px; }
 #que-falta { scroll-margin-top: 4rem; }
 
+/* ---- Datos incompatibles (entregable 4) -------------------------------- */
+.mx-aviso.mx-bloqueo { border-color: var(--crit); background: var(--crit-soft); }
+.mx-bloqueo .mx-aviso-et, .mx-bloqueo .mx-aviso-ir { color: var(--crit); }
+.mx-bloqueo .mx-aviso-ir:focus-visible { outline-color: var(--crit); }
+.mx-incompat { display: grid; gap: .3rem; padding-top: .5rem; border-top: 1px solid var(--line); }
+.mx-incompat:first-of-type { border-top: 0; padding-top: 0; }
+.mx-incompat-et { margin: 0; font-weight: 700; }
+.mx-incompat-et code { font: 600 .75rem/1 var(--f-codigo); color: var(--crit); margin-right: .4rem; }
+.mx-choque { display: flex; flex-wrap: wrap; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+.mx-choque li {
+  font-size: .85rem;
+  padding: .15rem .5rem;
+  border: 1px solid var(--crit);
+  border-radius: 999px;
+  background: var(--panel);
+}
+.mx-choque li + li::before { content: "≠"; font-weight: 700; color: var(--crit); margin-right: .45rem; }
+.mx-datos dt.conflicto { color: var(--crit); font-weight: 700; }
+.mx-datos dt.conflicto::before { content: "⚠ "; }
+.mx-entendido.contradictorio { border-left-color: var(--crit); }
+.mx-sit.inconsistente { color: var(--crit); }
+
 /* ---- Estado de la consulta --------------------------------------------- */
 .mx-estado {
   display: grid;

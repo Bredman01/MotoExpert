@@ -10,7 +10,9 @@
            regla_aprendida/3.
 :- discontiguous diagnostico/4, prioridad_base/2, evidencia/3, verificacion/3,
            contraevidencia/3, descarte/2, compite_con/2, recomendacion/2,
-           variable/5, opciones/2, expresion_lex/3.
+           variable/5, opciones/2, expresion_lex/3,
+           aprendido/2, aprendido_variable/2, texto_valor_aprendido/3,
+           regla_aprendida/3.
 
 % Carpeta de este archivo: allí se guarda el conocimiento aprendido.
 :- dynamic directorio_base/1.
@@ -54,6 +56,8 @@
          en texto libre en observaciones obs(Variable, Valor)
      10. Modo experto: adquisición de conocimiento con assertz/1 y
          persistencia en conocimiento_aprendido.pl
+     11. Reglas de consistencia: detectan datos lógicamente incompatibles
+         y bloquean el diagnóstico antes de emitirlo (entregable 4)
 
     Python (interfaz Streamlit) nunca usa read/1 en Prolog: cada consulta
     recibe la lista completa y devuelve resultados como listas.
@@ -466,6 +470,7 @@ mensaje_estado(datos_insuficientes,         'Hay hipótesis compatibles, pero la
 mensaje_estado(sin_diagnostico_concluyente, 'Ningún diagnóstico del catálogo es compatible con los datos. Se recomienda una revisión profesional.').
 mensaje_estado(fuera_de_alcance,            'La motocicleta está fuera del alcance del sistema. Solo se informan alertas de seguridad.').
 mensaje_estado(sin_datos,                   'No se recibieron observaciones válidas. No es posible emitir un diagnóstico.').
+mensaje_estado(inconsistente,               'Los datos ingresados son lógicamente incompatibles. El diagnóstico queda bloqueado hasta corregirlos; las alertas de seguridad se mantienen.').
 
 % -------------------------------------------------------------------------
 % 1.26 valores_derivados(Variable, Valores): valores cualitativos que el
@@ -504,6 +509,52 @@ mensaje_falta(sin_hipotesis,    'Ninguna hipótesis tiene todavía evidencia a f
 mensaje_falta(fuera_de_alcance, 'La motocicleta está fuera del alcance: no se buscan datos adicionales para diagnosticar.').
 mensaje_falta(sin_sugerencias,  'No queda ningún dato del catálogo que cambie el resultado. Se recomienda una revisión profesional.').
 mensaje_falta(ambiguo,          'Varios diagnósticos que se confunden entre sí quedaron con respaldo Alto por la misma prueba, así que todavía no se sabe cuál es. El dato sugerido es el que ayuda a distinguirlos.').
+mensaje_falta(inconsistente,    'Los datos se contradicen: no se busca el diagnóstico hasta corregirlos. Los datos sugeridos son las respuestas que hay que revisar.').
+
+% -------------------------------------------------------------------------
+% 1.30 incompatibles(Id, Condiciones, Explicacion): REGLAS DE CONSISTENCIA
+%      del dominio (entregable 4). Cada hecho enumera condiciones que NO
+%      pueden cumplirse a la vez en una misma motocicleta: si el caso las
+%      cumple todas, los datos son lógicamente incompatibles y el sistema
+%      bloquea el diagnóstico (sección 11).
+%      Una condición es Variable-Valor, o rango(Variable, Min, Max) para un
+%      valor numérico medido (Min =< Valor < Max).
+%      C00 (la misma pregunta con dos respuestas distintas) no es un hecho:
+%      la detecta la regla R11.2 sobre la lista recibida.
+% -------------------------------------------------------------------------
+incompatibles(c01, [dificultad_arranque-no, giro_arranque-no_gira],
+              'Si el motor no gira al accionar el arranque, la moto no puede encender sin dificultad.').
+incompatibles(c02, [dificultad_arranque-no, interruptor_paro-paro],
+              'Con el interruptor de apagado en OFF el motor no puede encender; no puede arrancar sin dificultad.').
+incompatibles(c03, [dificultad_arranque-no, nivel_combustible-vacio],
+              'Con el tanque vacío el motor no puede encender; no puede arrancar sin dificultad.').
+incompatibles(c04, [nivel_combustible-vacio, combustible_viejo-si],
+              'Si el tanque está vacío, no hay combustible almacenado que pueda estar viejo.').
+incompatibles(c05, [fusible-fundido, tablero-si],
+              'Con el fusible principal fundido no llega corriente al tablero: no puede encender.').
+incompatibles(c06, [tablero-no, luces-apagadas, clic_arranque-si],
+              'Sin ninguna alimentación eléctrica (tablero y luces apagados) el relé de arranque no puede hacer clic.').
+incompatibles(c07, [rango(voltaje, 0, 6), tablero-si],
+              'Con la batería por debajo de 6 V el tablero no puede encender: el voltaje o el tablero están mal informados.').
+incompatibles(c08, [rango(voltaje, 0, 6), luces-normal],
+              'Con la batería por debajo de 6 V las luces no pueden tener intensidad normal.').
+incompatibles(c09, [rango(voltaje, 14, 21)],
+              'Una batería de 12 V en reposo no supera unos 13,5 V: la lectura se tomó con el motor encendido o es un error.').
+
+% -------------------------------------------------------------------------
+% 1.31 texto_incompatible(Id, Titulo): nombre corto de cada regla para la
+%      interfaz y la traza.
+% -------------------------------------------------------------------------
+texto_incompatible(c00, 'Dos respuestas distintas para la misma pregunta').
+texto_incompatible(c01, 'Arranca sin dificultad, pero el motor no gira').
+texto_incompatible(c02, 'Arranca sin dificultad con el interruptor en OFF').
+texto_incompatible(c03, 'Arranca sin dificultad con el tanque vacío').
+texto_incompatible(c04, 'Tanque vacío con combustible viejo').
+texto_incompatible(c05, 'Fusible fundido con el tablero encendido').
+texto_incompatible(c06, 'Clic de arranque sin alimentación eléctrica').
+texto_incompatible(c07, 'Tablero encendido con la batería casi a cero').
+texto_incompatible(c08, 'Luces normales con la batería casi a cero').
+texto_incompatible(c09, 'Voltaje en reposo imposible').
 
 
 /* =========================================================================
@@ -1136,6 +1187,14 @@ motivo_pregunta(_, _, 'Pregunta general de diagnóstico.').
    ========================================================================= */
 
 % consultar(+ListaObs, -Estado, -Mensaje, -Resultados, -Descartadas, -Invalidas)
+% BLOQUEO (entregable 4): si los datos son incompatibles (R11.4), la
+% primera cláusula responde 'inconsistente' con solo las alertas de
+% seguridad y el CORTE impide llegar al diagnóstico.
+consultar(Lista, inconsistente, Mensaje, Alertas, [], Invalidas) :-
+    datos_inconsistentes(Lista), !,
+    observaciones_invalidas(Lista, Invalidas),
+    mensaje_estado(inconsistente, Mensaje),
+    alertas_prudentes(Lista, Alertas).
 consultar(Lista, Estado, Mensaje, Resultados, Descartadas, Invalidas) :-
     observaciones_invalidas(Lista, Invalidas),
     normalizar_caso(Lista, Caso),
@@ -1162,11 +1221,19 @@ observaciones_invalidas(Lista, [T]) :-
     format(atom(T), '~q (no es una lista)', [Lista]).
 
 % siguiente_pregunta(+ListaObs, -Variable): 'fin' si no hay más preguntas.
+% Con datos incompatibles, la entrevista vuelve a preguntar la última
+% respuesta involucrada en la contradicción (R11.6), para corregirla.
+siguiente_pregunta(Lista, Var) :-
+    variable_a_revisar(Lista, V), !,
+    Var = V.
 siguiente_pregunta(Lista, Var) :-
     normalizar_caso(Lista, Caso),
     elegir_pregunta(Caso, Var).
 
 % por_que_pregunta(+ListaObs, +Variable, -Motivo)
+por_que_pregunta(Lista, Var, Motivo) :-
+    motivo_revision(Lista, Var, M), !,
+    Motivo = M.
 por_que_pregunta(Lista, Var, Motivo) :-
     normalizar_caso(Lista, Caso),
     motivo_pregunta(Caso, Var, Motivo).
@@ -1203,6 +1270,13 @@ catalogo_variables(Variables) :-
 
 % explicar_consulta(+ListaObs, -General, -Conclusiones, -Hechos, -Alternativas)
 % Módulo "¿Por qué?" (sección 7). Ver R7.6.
+% Con datos incompatibles, la traza termina en la regla de consistencia
+% que bloqueó el diagnóstico: no hay conclusiones ni alternativas.
+explicar_consulta(Lista, General, [], Hechos, []) :-
+    datos_inconsistentes(Lista), !,
+    normalizar_caso(Lista, Caso),
+    findall(P, paso_bloqueo(Lista, Caso, P), General),
+    hechos_comprobados(Caso, Hechos).
 explicar_consulta(Lista, General, Conclusiones, Hechos, Alternativas) :-
     normalizar_caso(Lista, Caso),
     traza_general(Lista, Caso, General),
@@ -1212,6 +1286,12 @@ explicar_consulta(Lista, General, Conclusiones, Hechos, Alternativas) :-
 
 % que_falta(+ListaObs, -Situacion, -Mensaje, -Evaluadas, -Sugerencias)
 % Módulo "¿Qué falta?" (sección 8). Ver R8.7.
+% Con datos incompatibles no se buscan datos para diagnosticar: se sugiere
+% revisar las respuestas que se contradicen (R11.5).
+que_falta(Lista, inconsistente, Mensaje, [], Sugerencias) :-
+    datos_inconsistentes(Lista), !,
+    mensaje_falta(inconsistente, Mensaje),
+    sugerencias_revision(Lista, Sugerencias).
 que_falta(Lista, Situacion, Mensaje, Evaluadas, Sugerencias) :-
     normalizar_caso(Lista, Caso),
     situacion_evidencia(Caso, Situacion, Objetivo),
@@ -2400,22 +2480,32 @@ interpretar_texto(Texto, Observaciones, Reconocidos, NoReconocidas) :-
     palabras_no_reconocidas(Ignoradas, NoReconocidas).
 
 % R9.7 clasificar_hallazgos(+Hallazgos, +Vistas, -Observaciones, -Reconocidos)
-% Recursión sobre la lista: el primer valor de cada variable es el que vale.
+% Recursión sobre la lista. Vistas guarda Variable-Valor ya aceptados.
+% Si la descripción da DOS valores distintos a la misma variable ("arranca
+% bien ... no arranca"), el segundo queda como 'contradictorio' y TAMBIÉN
+% se entrega: la regla de consistencia C00 (R11.2) bloquea el diagnóstico
+% en lugar de quedarse en silencio con el primero (entregable 4).
 clasificar_hallazgos([], _, [], []).
 clasificar_hallazgos([h(V, X, Frase)|Hs], Vistas, Obs, [[V, X, FraseT, Texto, Estado]|Rec]) :-
     atomic_list_concat(Frase, ' ', FraseT),
     describir_hecho([], V-X, Texto),
     estado_hallazgo(V, X, Vistas, Estado),
-    (   Estado == aceptado
+    (   memberchk(Estado, [aceptado, contradictorio])
     ->  Obs = [obs(V, X)|Obs1],
-        Vistas1 = [V|Vistas]
+        Vistas1 = [V-X|Vistas]
     ;   Obs = Obs1,
         Vistas1 = Vistas
     ),
     clasificar_hallazgos(Hs, Vistas1, Obs1, Rec).
 
 % CORTE: estados excluyentes en orden; FALLBACK: invalido.
-estado_hallazgo(V, _, Vistas, repetido) :- memberchk(V, Vistas), !.
+% repetido      : la misma variable con el mismo valor (no aporta nada).
+% contradictorio: la misma variable con otro valor válido.
+estado_hallazgo(V, X, Vistas, repetido) :- memberchk(V-X, Vistas), !.
+estado_hallazgo(V, X, Vistas, contradictorio) :-
+    memberchk(V-_, Vistas),
+    obs_valida(obs(V, X)), !.
+estado_hallazgo(V, _, Vistas, repetido) :- memberchk(V-_, Vistas), !.
 estado_hallazgo(V, X, _, aceptado) :- obs_valida(obs(V, X)), !.
 estado_hallazgo(_, _, _, invalido).
 
@@ -3019,6 +3109,183 @@ texto_regla(H, Texto) :-
     tipo_regla(Tipo, Efecto),
     describir_hecho([], Cond, T),
     format(atom(Texto), 'Si «~w», ~w', [T, Efecto]).
+
+
+/* =========================================================================
+   11. REGLAS DE CONSISTENCIA (ENTREGABLE 4: ROBUSTEZ Y SEGURIDAD)
+   Antes de emitir un diagnóstico, el sistema comprueba que los datos no
+   sean lógicamente incompatibles según el dominio. Dos fuentes:
+     - C00 (R11.2): la misma pregunta recibió dos respuestas distintas, por
+       ejemplo una descripción que dice "arranca bien" y "no arranca", o un
+       «Sobrecalentamiento: no» marcado junto a una medición de 135 °C.
+     - C01 a C09 (hechos incompatibles/3, sección 1.30): combinaciones de
+       respuestas que no pueden darse en una misma moto, como "arranca sin
+       dificultad" y "el motor no gira".
+   Si hay al menos una incompatibilidad, consultar/6 responde 'inconsistente'
+   y NO evalúa diagnósticos ni verificaciones básicas: un diagnóstico sobre
+   datos contradictorios sería erróneo. Las alertas de seguridad se
+   mantienen (R11.7): ante la duda, se avisa del riesgo.
+   ========================================================================= */
+
+% R11.1 cumple_condicion(+Caso, +Condicion)
+% Variable-Valor se comprueba con hecho_caso/3 (R1.7); rango(V, Min, Max)
+% exige un valor numérico medido con Min =< Valor < Max.
+% CORTE: las dos formas de condición son excluyentes.
+cumple_condicion(Caso, rango(V, Min, Max)) :- !,
+    valor(V, Caso, X), number(X),
+    X >= Min, X < Max.
+cumple_condicion(Caso, V-X) :-
+    hecho_caso(Caso, V, X).
+
+% texto_condicion(+Caso, +Condicion, -Texto): forma legible de la condición
+% con el valor que dio el usuario.
+texto_condicion(Caso, rango(V, _, _), Texto) :- !,
+    valor(V, Caso, X),
+    variable(V, _, _, Etiqueta, _),
+    (   V == voltaje
+    ->  format(atom(Texto), '~w: ~w V', [Etiqueta, X])
+    ;   format(atom(Texto), '~w: ~w', [Etiqueta, X])
+    ).
+texto_condicion(_, V-X, Texto) :-
+    describir_hecho([], V-X, Texto).
+
+% variable_condicion(+Condicion, -Variable)
+variable_condicion(rango(V, _, _), V) :- !.
+variable_condicion(V-_, V).
+
+% R11.2 respuestas_en_conflicto(+Lista, -Variable, -Valores)
+% PROCESAMIENTO DE LISTAS: sobre la lista recibida (ANTES de quitar
+% repetidas, que solo conservaría la primera) busca variables con dos o
+% más valores válidos distintos. 'desconocido' no contradice a nadie.
+respuestas_en_conflicto(Lista, Var, Valores) :-
+    is_list(Lista),
+    particionar_obs(Lista, Validas, _),
+    findall(V, member(obs(V, _), Validas), Vs0),
+    sort(Vs0, Vs),
+    member(Var, Vs),
+    findall(X, ( member(obs(Var, X), Validas), X \== desconocido ), Xs0),
+    list_to_set(Xs0, Valores),
+    Valores = [_, _|_].
+
+% R11.3 inconsistencia(+Lista, -Inconsistencia)
+% Cada incompatibilidad encontrada:
+%   [Id, Titulo, Explicacion, TextosDeLosHechos, Variables]
+% Primera cláusula: C00 (R11.2). Segunda: hechos incompatibles/3, comprobados
+% sobre el caso normalizado con cumple_condicion/2 (R11.1) para TODAS las
+% condiciones: procesamiento de listas con forall/2.
+inconsistencia(Lista, [c00, Titulo, Explicacion, Textos, [Var]]) :-
+    respuestas_en_conflicto(Lista, Var, Valores),
+    texto_incompatible(c00, Titulo),
+    variable(Var, _, _, Etiqueta, _),
+    findall(T, ( member(X, Valores), describir_hecho([], Var-X, T) ), Textos),
+    findall(L, ( member(X, Valores), valor_legible(X, L) ), Legibles),
+    atomic_list_concat(Legibles, '» y «', Respuestas),
+    format(atom(Explicacion),
+           'La pregunta «~w» recibió las respuestas «~w»: solo una puede ser cierta.',
+           [Etiqueta, Respuestas]).
+inconsistencia(Lista, [Id, Titulo, Explicacion, Textos, Variables]) :-
+    normalizar_caso(Lista, Caso),
+    incompatibles(Id, Condiciones, Explicacion),
+    forall(member(C, Condiciones), cumple_condicion(Caso, C)),
+    texto_incompatible(Id, Titulo),
+    findall(T, ( member(C, Condiciones), texto_condicion(Caso, C, T) ), Textos),
+    findall(V, ( member(C, Condiciones), variable_condicion(C, V) ), Variables).
+
+% R11.4 inconsistencias(+Lista, -Inconsistencias)
+% PREDICADO PÚBLICO. Todas las incompatibilidades del caso ([] si no hay).
+inconsistencias(Lista, Inconsistencias) :-
+    findall(I, inconsistencia(Lista, I), Inconsistencias).
+
+% datos_inconsistentes(+Lista)
+% CORTE: basta con una incompatibilidad para bloquear el diagnóstico.
+datos_inconsistentes(Lista) :-
+    inconsistencia(Lista, _), !.
+
+% R11.5 sugerencias_revision(+Lista, -Sugerencias)
+% "¿Qué falta?" con datos incompatibles: las respuestas a revisar, con el
+% mismo formato de R8.6. Primero la respuesta dada más recientemente, que
+% suele ser la que contradijo a las anteriores.
+sugerencias_revision(Lista, Sugerencias) :-
+    inconsistencias(Lista, Ins),
+    variables_por_recencia(Lista, Recientes),
+    findall([V, Etq, Preg, 3, 0, Tipo, Efectos],
+            ( member(V, Recientes),
+              findall(E, ( member([Id, Titulo, _, _, Vs], Ins), memberchk(V, Vs),
+                           upcase_atom(Id, IdU),
+                           format(atom(E), 'Contradice: «~w» (~w).', [Titulo, IdU]) ),
+                      Efectos),
+              Efectos \== [],
+              variable(V, _, Tipo, Etq, Preg) ),
+            Sugerencias).
+
+% variables_por_recencia(+Lista, -Variables): variables de la lista, la más
+% reciente primero y sin repetir.
+variables_por_recencia(Lista, Variables) :-
+    is_list(Lista), !,
+    particionar_obs(Lista, Validas, _),
+    reverse(Validas, Inversa),
+    findall(V, member(obs(V, _), Inversa), Vs),
+    list_to_set(Vs, Variables).
+variables_por_recencia(_, []).
+
+% R11.6 variable_a_revisar(+Lista, -Variable) y motivo_revision/3
+% La entrevista guiada vuelve a preguntar la respuesta más reciente de la
+% contradicción y explica por qué. Fallan si los datos son consistentes.
+variable_a_revisar(Lista, Var) :-
+    datos_inconsistentes(Lista),
+    sugerencias_revision(Lista, [[Var|_]|_]).
+
+motivo_revision(Lista, Var, Motivo) :-
+    datos_inconsistentes(Lista),
+    inconsistencia(Lista, [_, Titulo, Explicacion, _, Vs]),
+    memberchk(Var, Vs), !,
+    format(atom(Motivo),
+           'Consistencia: esta respuesta se contradice con otra («~w»). ~w Corríjala para continuar con el diagnóstico.',
+           [Titulo, Explicacion]).
+
+% R11.7 alertas_prudentes(+Lista, -Alertas)
+% Con datos incompatibles se bloquea el diagnóstico, pero NO las alertas de
+% seguridad: una alerta se activa si CUALQUIERA de los valores informados la
+% dispara (aunque otra respuesta la contradiga). Mismo formato que R3.6.
+alertas_prudentes(Lista, Alertas) :-
+    (   is_list(Lista)
+    ->  particionar_obs(Lista, Validas, _)
+    ;   Validas = []
+    ),
+    (   setof(Par, alerta_prudente(Validas, Par), Pares)
+    ->  pares_a_valores(Pares, Alertas)
+    ;   Alertas = []
+    ).
+
+alerta_prudente(Validas, Clave-Resultado) :-
+    alerta(Cod, Nombre, Sub),
+    findall(V-X, ( disparador_alerta(Cod, V, X), memberchk(obs(V, X), Validas) ), D0),
+    sort(D0, Disparadores),
+    Disparadores \== [],
+    JR = 'Las alertas de seguridad no dependen del respaldo: una señal basta, aunque otra respuesta la contradiga.',
+    armar_resultado(Validas, alerta, Cod, Nombre, Sub, no_aplica, JR, Disparadores, [], Clave, Resultado).
+
+% R11.8 paso_bloqueo(+Lista, +Caso, -Paso)
+% Traza "¿Por qué?" de una consulta bloqueada: normalización, cada regla de
+% consistencia que se cumplió con los hechos que la dispararon, y el bloqueo.
+paso_bloqueo(Lista, Caso, P) :-
+    paso_general(Lista, Caso, P),
+    P = [_, 'R1.5', _].
+paso_bloqueo(Lista, _, P) :-
+    inconsistencia(Lista, [Id, Titulo, Explicacion, Textos, _]),
+    upcase_atom(Id, IdU),
+    (   Id == c00
+    ->  Regla = 'R11.2', Pred = 'respuestas_en_conflicto/3'
+    ;   Regla = 'R11.3', Pred = 'inconsistencia/2'
+    ),
+    (   format(atom(T), '~w: ~w - ~w ~w', [Pred, IdU, Titulo, Explicacion]),
+        P = [0, Regla, T]
+    ;   member(Txt, Textos),
+        format(atom(T), 'hecho_caso/3: ~w.', [Txt]),
+        P = [1, 'R11.1', T]
+    ).
+paso_bloqueo(_, _, [0, 'R11.4', T]) :-
+    T = 'consultar/6: datos inconsistentes; el CORTE bloquea los diagnósticos y las verificaciones básicas. Solo se evalúan las alertas de seguridad (R11.7).'.
 
 
 /* =========================================================================

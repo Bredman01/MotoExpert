@@ -15,6 +15,15 @@ texto_valor_aprendido(voltaje_al_acelerar, no, no).
 expresion_lex(voltaje_al_acelerar, no, [voltaje, no, sube, al, acelerar]).
 expresion_lex(voltaje_al_acelerar, si, [voltaje, sube, al, acelerar]).
 
+% Pregunta tiene_gasolina - Tiene gasolina? (aprendida el 2026-11-11 08:48)
+aprendido_variable(tiene_gasolina, '2026-11-11 08:48').
+variable(tiene_gasolina, combustible, dato, 'Tiene gasolina?', 'Lleva mucho tiempo sin tanuqer?').
+opciones(tiene_gasolina, [si, no, desconocido]).
+texto_valor_aprendido(tiene_gasolina, si, si).
+texto_valor_aprendido(tiene_gasolina, no, no).
+expresion_lex(tiene_gasolina, no, [caso, puede, ser, otro]).
+expresion_lex(tiene_gasolina, si, [debe, tanquear, la, moto]).
+
 % D11 - Regulador de voltaje dañado (aprendido el 2026-11-10 18:48)
 aprendido(d11, '2026-11-10 18:48').
 diagnostico(d11, 'Regulador de voltaje dañado', 'sistema de carga', electrica).
@@ -27,6 +36,16 @@ descarte(d11, [voltaje-normal]).
 compite_con(d11, d01).
 compite_con(d11, d02).
 recomendacion(d11, 'Revisar el regulador de voltaje en un taller.').
+
+% D12 - Echele gasolina (aprendido el 2026-11-11 08:41)
+aprendido(d12, '2026-11-11 08:41').
+diagnostico(d12, 'Echele gasolina', 'Motor', motor).
+prioridad_base(d12, 3).
+evidencia(d12, olor_gasolina, no).
+verificacion(d12, nivel_combustible, vacio).
+descarte(d12, [interruptor_paro-marcha]).
+compite_con(d12, d01).
+recomendacion(d12, 'No sea pobre').
 
 % Reglas agregadas a diagnósticos existentes
 regla_aprendida(r1, verificacion(d11, voltaje_al_acelerar, no), '2026-11-10 19:26').

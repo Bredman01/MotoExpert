@@ -294,6 +294,16 @@ class MotorMotoExpert:
             ],
         }
 
+    # -- entregable 4: reglas de consistencia ----------------------------
+    def inconsistencias(self, observaciones) -> list[dict]:
+        """Invoca inconsistencias/2: datos lógicamente incompatibles ([] si no hay)."""
+        lista = self._texto_lista(observaciones)
+        sol = self._consultar_uno(f"inconsistencias({lista}, I)")
+        if sol is None:
+            raise ErrorMotor("inconsistencias/2 no devolvió solución.")
+        return [{"id": i, "titulo": t, "explicacion": x, "hechos": list(h), "variables": list(v)}
+                for i, t, x, h, v in sol["I"]]
+
     # -- entregable 3: lenguaje natural ----------------------------------
     def interpretar(self, texto: str) -> dict:
         """Invoca interpretar_texto/4: la DCG convierte la descripción en observaciones."""
@@ -307,9 +317,11 @@ class MotorMotoExpert:
         return {
             "consulta": self.ultima_consulta,
             # Las mismas observaciones que Prolog devuelve como obs(V, X): las
-            # que quedaron en estado "aceptado" (PySwip entrega obs/2 como texto).
+            # que quedaron "aceptado" o "contradictorio" (PySwip entrega obs/2
+            # como texto). Las contradictorias se envían para que la regla de
+            # consistencia C00 bloquee el diagnóstico.
             "observaciones": [(r["variable"], r["valor"]) for r in reconocidos
-                              if r["estado"] == "aceptado"],
+                              if r["estado"] in ("aceptado", "contradictorio")],
             "reconocidos": reconocidos,
             "no_reconocidas": list(sol["N"]),
         }

@@ -33,6 +33,10 @@ Casos del entregable 3 (lenguaje natural y modo experto):
  21. Causas sin distinguir: Alto confirmado por la misma prueba
  22. Modo experto: pregunta y reglas nuevas que distinguen diagnósticos
  23. Modo experto: editar lo aprendido (sin cambios si hay errores)
+Casos del entregable 4 (robustez y seguridad: reglas de consistencia):
+ 24. Hechos incompatibles bloquean el diagnóstico (C01) y se desbloquea al corregir
+ 25. Dos respuestas para la misma pregunta: medición y descripción (C00)
+ 26. Reglas con rangos numéricos y varias condiciones (C06 a C09)
 
 Las pruebas usan una copia temporal de la base con el conocimiento aprendido
 vacío: no dependen de lo que el experto haya enseñado ni lo modifican.
@@ -528,9 +532,9 @@ def caso_dcg_bordes(motor: MotorMotoExpert):
         ("(2) texto ajeno: sin observaciones", ajeno["observaciones"] == []),
         ("(2) informa 'precio' y 'llanta' como no reconocidas",
          {"precio", "llanta"} <= set(ajeno["no_reconocidas"])),
-        ("(3) el primer giro vale y el segundo queda como repetido",
+        ("(3) el primer giro se acepta y el segundo, distinto, se marca contradictorio",
          ("giro_arranque", "no_gira", "aceptado") in estados
-         and ("giro_arranque", "lento", "repetido") in estados),
+         and ("giro_arranque", "lento", "contradictorio") in estados),
         ("(3) 5000 cc se marca inválido y no se usa",
          ("cilindrada", 5000, "invalido") in estados and "cilindrada" not in dict(mixto["observaciones"])),
     ]
@@ -675,11 +679,12 @@ CASOS_MODULOS = [
     {"nombre": "Lenguaje natural - Textos vacíos, ajenos, repetidos y fuera de rango",
      "objetivo": "Comprobar que la DCG no falla ni inventa hechos: un texto vacío o ajeno no "
                  "produce observaciones; un dato repetido vale la primera vez; un número fuera de "
-                 "rango se marca inválido y no se usa.",
+                 "rango se marca inválido y no se usa; un dato que contradice al anterior se "
+                 "marca contradictorio (lo bloquea la regla C00 del entregable 4).",
      "entrada": "(1) ''. (2) 'quisiera saber el precio de una llanta'. (3) 'el motor no gira, el "
                 "motor gira lento y la moto tiene 5000 cc'.",
      "esperado": "(1) y (2) sin observaciones; (2) informa 'precio' y 'llanta' como no "
-                 "reconocidas. (3) giro no_gira; el segundo giro repetido; 5000 cc inválido.",
+                 "reconocidas. (3) giro no_gira; el segundo giro contradictorio; 5000 cc inválido.",
      "ejecutar": caso_dcg_bordes},
     {"nombre": "Modo experto - assertz/1 y persistencia en conocimiento_aprendido.pl",
      "objetivo": "Comprobar que aprender_diagnostico/4 valida la ficha, inyecta el diagnóstico "
@@ -727,6 +732,28 @@ CASOS_MODULOS = [
      "esperado": "Los errores se informan y el archivo queda idéntico; las ediciones válidas se "
                  "aplican y la regla agregada aparte se conserva.",
      "ejecutar": lambda motor: caso_edicion(motor)},
+    {"nombre": "Consistencia - Hechos incompatibles bloquean el diagnóstico",
+     "objetivo": "Comprobar que una regla de consistencia detecta respuestas que no pueden darse "
+                 "a la vez, que consultar/6 bloquea el diagnóstico, que «¿Qué falta?» y la "
+                 "entrevista piden corregir la respuesta y que al corregirla se desbloquea.",
+     "entrada": "[cilindrada 150, dificultad para encender = no, giro = no gira, tablero = sí]; "
+                "luego dificultad = persistente.",
+     "esperado": "C01; estado inconsistente sin diagnósticos; revisar giro y dificultad; traza con "
+                 "R11.3 y R11.4; tras corregir, sin inconsistencias.",
+     "ejecutar": lambda motor: caso_incompatibles(motor)},
+    {"nombre": "Consistencia - Dos respuestas para la misma pregunta (texto y medición)",
+     "objetivo": "Comprobar la regla C00: una medición que contradice lo marcado y una descripción "
+                 "que se contradice bloquean el diagnóstico sin ocultar las alertas de seguridad.",
+     "entrada": "(1) Sobrecalentamiento = no + aceite a 135 °C. (2) 'arranca bien pero a veces no "
+                "arranca'. (3) El mismo valor dos veces y 'No lo sé' seguido de un valor.",
+     "esperado": "(1) C00, bloqueado, se mantiene A02. (2) contradictorio y bloqueado. (3) sin choque.",
+     "ejecutar": lambda motor: caso_conflicto_directo(motor)},
+    {"nombre": "Consistencia - Reglas con valores numéricos y varias condiciones",
+     "objetivo": "Comprobar las reglas con rangos numéricos (voltaje) y las que exigen varias "
+                 "condiciones a la vez, sin falsos positivos en un caso coherente.",
+     "entrada": "Voltaje 3,2 / 16 / 12,6 V con tablero y luces; tablero y luces apagados con y sin clic.",
+     "esperado": "C07 y C08; C09; ninguna; C06 solo con las tres condiciones.",
+     "ejecutar": lambda motor: caso_incompatibles_numericos(motor)},
 ]
 
 
@@ -888,6 +915,100 @@ def caso_edicion(motor: MotorMotoExpert):
          ok_d["estado"] == "ok" and nuevo["prioridad"] == 2 and "Medir la carga." in nuevo["recomendaciones"]),
         ("(5) la regla agregada aparte se conserva al editar", reglas == 1),
         ("(6) la pregunta editada usa sus frases nuevas", ok_p["estado"] == "ok" and entiende == "no"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Entregable 4: reglas de consistencia
+# ---------------------------------------------------------------------------
+CASO_INCOMPATIBLE = [("cilindrada", 150), ("dificultad_arranque", "no"),
+                     ("giro_arranque", "no_gira"), ("tablero", "si")]
+
+
+def ids(inconsistencias: list[dict]) -> list[str]:
+    return [i["id"] for i in inconsistencias]
+
+
+def caso_incompatibles(motor: MotorMotoExpert):
+    r = motor.consultar(CASO_INCOMPATIBLE)
+    ins = motor.inconsistencias(CASO_INCOMPATIBLE)
+    f = motor.que_falta(CASO_INCOMPATIBLE)
+    x = motor.explicar(CASO_INCOMPATIBLE)
+    pregunta = motor.siguiente_pregunta(CASO_INCOMPATIBLE)
+    motivo = motor.por_que(CASO_INCOMPATIBLE, pregunta)
+    corregido = [o for o in CASO_INCOMPATIBLE if o[0] != "dificultad_arranque"] + \
+                [("dificultad_arranque", "persistente")]
+    r2 = motor.consultar(corregido)
+    reglas = [p["regla"] for p in x["general"]]
+    obtenido = [f"Consulta : {r['consulta']}",
+                f"Obtenido : estado={r['estado']}; resultados={resumen(r)}",
+                f"           inconsistencias={[(i['id'], i['hechos']) for i in ins]}",
+                f"           ¿Qué falta? {f['situacion']} -> revisar {[s['variable'] for s in f['sugerencias']]}",
+                f"           entrevista -> {pregunta}: {motivo}",
+                f"           traza -> {reglas}",
+                f"           corregido (dificultad persistente) -> {r2['estado']}: {resumen(r2)}"]
+    return obtenido, [
+        ("(1) la regla C01 detecta 'arranca sin dificultad' + 'el motor no gira'", ids(ins) == ["c01"]),
+        ("(2) consultar/6 responde 'inconsistente' y no emite ningún diagnóstico",
+         r["estado"] == "inconsistente" and r["resultados"] == []),
+        ("(3) «¿Qué falta?» pide revisar las dos respuestas, la más reciente primero",
+         f["situacion"] == "inconsistente"
+         and [s["variable"] for s in f["sugerencias"]] == ["giro_arranque", "dificultad_arranque"]),
+        ("(4) la entrevista vuelve a preguntar la respuesta en conflicto y explica por qué",
+         pregunta == "giro_arranque" and motivo.startswith("Consistencia:")),
+        ("(5) la traza «¿Por qué?» muestra la regla de consistencia y el bloqueo",
+         "R11.3" in reglas and "R11.4" in reglas and x["conclusiones"] == []),
+        ("(6) al corregir la respuesta, el diagnóstico se desbloquea",
+         r2["estado"] != "inconsistente" and motor.inconsistencias(corregido) == []),
+    ]
+
+
+def caso_conflicto_directo(motor: MotorMotoExpert):
+    from clasificador import convertir_mediciones
+    medida, _ = convertir_mediciones({"temperatura": 135})
+    obs = [("cilindrada", 150), ("sobrecalentamiento", "no")] + medida
+    r = motor.consultar(obs)
+    ins = motor.inconsistencias(obs)
+    texto = motor.interpretar("Mi moto de 150 cc arranca bien pero a veces no arranca")
+    estados = [(x["variable"], x["valor"], x["estado"]) for x in texto["reconocidos"]]
+    r_texto = motor.consultar(texto["observaciones"])
+    sin_choque = motor.inconsistencias([("sobrecalentamiento", "si"), ("sobrecalentamiento", "si"),
+                                        ("luces", "desconocido"), ("luces", "debil")])
+    obtenido = [f"Obtenido : marcado 'no' + 135 °C -> {obs}",
+                f"           estado={r['estado']}; resultados={resumen(r)}",
+                f"           inconsistencias={[(i['id'], i['explicacion']) for i in ins]}",
+                f"           texto -> {estados}; estado={r_texto['estado']}",
+                f"           mismo valor dos veces / 'No lo sé' + valor -> {ids(sin_choque)}"]
+    return obtenido, [
+        ("(1) «Sobrecalentamiento: no» con una medición de 135 °C dispara C00", ids(ins) == ["c00"]),
+        ("(2) se bloquea el diagnóstico, pero la alerta de seguridad A02 se mantiene",
+         r["estado"] == "inconsistente" and codigos(r) == ["a02"]),
+        ("(3) la DCG marca 'a veces no arranca' como contradictorio tras 'arranca bien'",
+         ("dificultad_arranque", "no", "aceptado") in estados
+         and ("dificultad_arranque", "ocasional", "contradictorio") in estados),
+        ("(4) y esa descripción también queda bloqueada", r_texto["estado"] == "inconsistente"),
+        ("(5) repetir el mismo valor o 'No lo sé' no es una contradicción", sin_choque == []),
+    ]
+
+
+def caso_incompatibles_numericos(motor: MotorMotoExpert):
+    bajo = [("voltaje", 3.2), ("tablero", "si"), ("luces", "normal")]
+    alto = [("voltaje", 16)]
+    normal = [("voltaje", 12.6), ("tablero", "si"), ("luces", "normal")]
+    tres = [("tablero", "no"), ("luces", "apagadas"), ("clic_arranque", "si")]
+    dos = [("tablero", "no"), ("luces", "apagadas")]
+    resultados = {n: ids(motor.inconsistencias(c)) for n, c in
+                  (("3,2 V", bajo), ("16 V", alto), ("12,6 V", normal), ("sin corriente + clic", tres),
+                   ("sin corriente", dos))}
+    todas = [str(i) for i in motor.consulta_libre("findall(I, incompatibles(I, _, _), L)")[0]["L"]]
+    obtenido = [f"Obtenido : {resultados}",
+                f"           reglas de consistencia en la base: {todas}"]
+    return obtenido, [
+        ("(1) 3,2 V con tablero y luces normales dispara C07 y C08", resultados["3,2 V"] == ["c07", "c08"]),
+        ("(2) 16 V en reposo es imposible (C09, una sola condición)", resultados["16 V"] == ["c09"]),
+        ("(3) 12,6 V con tablero y luces normales es coherente", resultados["12,6 V"] == []),
+        ("(4) C06 exige las tres condiciones a la vez", resultados["sin corriente + clic"] == ["c06"]
+         and resultados["sin corriente"] == []),
     ]
 
 

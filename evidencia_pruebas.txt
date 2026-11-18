@@ -1,4 +1,4 @@
-MotoExpert - Evidencia de pruebas (2026-11-10 20:12)
+MotoExpert - Evidencia de pruebas (2026-11-17 18:16)
 Base: copia de base_conocimiento.pl con el conocimiento aprendido vacío.
 
 ==============================================================================
@@ -224,7 +224,7 @@ Objetivo : Comprobar que Prolog rechaza observaciones con variables libres llega
 Entrada  : [obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)]
 Esperado : 2 inválidas; luces = debil aceptada; d01 entre los resultados.
 Consulta : consultar([obs(voltaje, _), obs('Luces', 'Debil'), obs(_, si), obs(giro_arranque, lento)], E, M, R, D, I)
-Obtenido : inválidas=['obs(voltaje,_2562)', 'obs(_2584,si)']; resultados=d01(respaldo=medio, prioridad=2), d02(respaldo=medio, prioridad=2)
+Obtenido : inválidas=['obs(voltaje,_66)', 'obs(_88,si)']; resultados=d01(respaldo=medio, prioridad=2), d02(respaldo=medio, prioridad=2)
            hechos=['Intensidad de las luces: débil', 'Giro del motor al arrancar: lento']
 Comprobaciones:
    [OK] 2 observaciones con variables libres rechazadas por ground/1
@@ -285,17 +285,17 @@ Veredicto: APROBADO
 ==============================================================================
 CASO 18: Lenguaje natural - Textos vacíos, ajenos, repetidos y fuera de rango
 ==============================================================================
-Objetivo : Comprobar que la DCG no falla ni inventa hechos: un texto vacío o ajeno no produce observaciones; un dato repetido vale la primera vez; un número fuera de rango se marca inválido y no se usa.
+Objetivo : Comprobar que la DCG no falla ni inventa hechos: un texto vacío o ajeno no produce observaciones; un dato repetido vale la primera vez; un número fuera de rango se marca inválido y no se usa; un dato que contradice al anterior se marca contradictorio (lo bloquea la regla C00 del entregable 4).
 Entrada  : (1) ''. (2) 'quisiera saber el precio de una llanta'. (3) 'el motor no gira, el motor gira lento y la moto tiene 5000 cc'.
-Esperado : (1) y (2) sin observaciones; (2) informa 'precio' y 'llanta' como no reconocidas. (3) giro no_gira; el segundo giro repetido; 5000 cc inválido.
+Esperado : (1) y (2) sin observaciones; (2) informa 'precio' y 'llanta' como no reconocidas. (3) giro no_gira; el segundo giro contradictorio; 5000 cc inválido.
 Obtenido : (1) [] []
            (2) [] no reconocidas=['quisiera', 'saber', 'precio', 'llanta']
-           (3) [('giro_arranque', 'no_gira', 'aceptado'), ('giro_arranque', 'lento', 'repetido'), ('cilindrada', 5000, 'invalido')]
+           (3) [('giro_arranque', 'no_gira', 'aceptado'), ('giro_arranque', 'lento', 'contradictorio'), ('cilindrada', 5000, 'invalido')]
 Comprobaciones:
    [OK] (1) texto vacío: sin observaciones ni errores
    [OK] (2) texto ajeno: sin observaciones
    [OK] (2) informa 'precio' y 'llanta' como no reconocidas
-   [OK] (3) el primer giro vale y el segundo queda como repetido
+   [OK] (3) el primer giro se acepta y el segundo, distinto, se marca contradictorio
    [OK] (3) 5000 cc se marca inválido y no se usa
 Veredicto: APROBADO
 
@@ -399,5 +399,61 @@ Comprobaciones:
 Veredicto: APROBADO
 
 ==============================================================================
-RESUMEN: 23 de 23 casos aprobados.
+CASO 24: Consistencia - Hechos incompatibles bloquean el diagnóstico
+==============================================================================
+Objetivo : Comprobar que una regla de consistencia detecta respuestas que no pueden darse a la vez, que consultar/6 bloquea el diagnóstico, que «¿Qué falta?» y la entrevista piden corregir la respuesta y que al corregirla se desbloquea.
+Entrada  : [cilindrada 150, dificultad para encender = no, giro = no gira, tablero = sí]; luego dificultad = persistente.
+Esperado : C01; estado inconsistente sin diagnósticos; revisar giro y dificultad; traza con R11.3 y R11.4; tras corregir, sin inconsistencias.
+Consulta : consultar([obs('cilindrada', 150), obs('dificultad_arranque', 'no'), obs('giro_arranque', 'no_gira'), obs('tablero', 'si')], E, M, R, D, I)
+Obtenido : estado=inconsistente; resultados=[] (sin conclusiones)
+           inconsistencias=[('c01', ['Dificultad para encender: no', 'Giro del motor al arrancar: no gira'])]
+           ¿Qué falta? inconsistente -> revisar ['giro_arranque', 'dificultad_arranque']
+           entrevista -> giro_arranque: Consistencia: esta respuesta se contradice con otra («Arranca sin dificultad, pero el motor no gira»). Si el motor no gira al accionar el arranque, la moto no puede encender sin dificultad. Corríjala para continuar con el diagnóstico.
+           traza -> ['R1.5', 'R11.3', 'R11.1', 'R11.1', 'R11.4']
+           corregido (dificultad persistente) -> datos_insuficientes: d03(respaldo=bajo, prioridad=3), d01(respaldo=bajo, prioridad=2)
+Comprobaciones:
+   [OK] (1) la regla C01 detecta 'arranca sin dificultad' + 'el motor no gira'
+   [OK] (2) consultar/6 responde 'inconsistente' y no emite ningún diagnóstico
+   [OK] (3) «¿Qué falta?» pide revisar las dos respuestas, la más reciente primero
+   [OK] (4) la entrevista vuelve a preguntar la respuesta en conflicto y explica por qué
+   [OK] (5) la traza «¿Por qué?» muestra la regla de consistencia y el bloqueo
+   [OK] (6) al corregir la respuesta, el diagnóstico se desbloquea
+Veredicto: APROBADO
+
+==============================================================================
+CASO 25: Consistencia - Dos respuestas para la misma pregunta (texto y medición)
+==============================================================================
+Objetivo : Comprobar la regla C00: una medición que contradice lo marcado y una descripción que se contradice bloquean el diagnóstico sin ocultar las alertas de seguridad.
+Entrada  : (1) Sobrecalentamiento = no + aceite a 135 °C. (2) 'arranca bien pero a veces no arranca'. (3) El mismo valor dos veces y 'No lo sé' seguido de un valor.
+Esperado : (1) C00, bloqueado, se mantiene A02. (2) contradictorio y bloqueado. (3) sin choque.
+Obtenido : marcado 'no' + 135 °C -> [('cilindrada', 150), ('sobrecalentamiento', 'no'), ('sobrecalentamiento', 'si')]
+           estado=inconsistente; resultados=a02(respaldo=no_aplica, prioridad=3)
+           inconsistencias=[('c00', 'La pregunta «Sobrecalentamiento» recibió las respuestas «no» y «sí»: solo una puede ser cierta.')]
+           texto -> [('cilindrada', 150, 'aceptado'), ('dificultad_arranque', 'no', 'aceptado'), ('dificultad_arranque', 'ocasional', 'contradictorio')]; estado=inconsistente
+           mismo valor dos veces / 'No lo sé' + valor -> []
+Comprobaciones:
+   [OK] (1) «Sobrecalentamiento: no» con una medición de 135 °C dispara C00
+   [OK] (2) se bloquea el diagnóstico, pero la alerta de seguridad A02 se mantiene
+   [OK] (3) la DCG marca 'a veces no arranca' como contradictorio tras 'arranca bien'
+   [OK] (4) y esa descripción también queda bloqueada
+   [OK] (5) repetir el mismo valor o 'No lo sé' no es una contradicción
+Veredicto: APROBADO
+
+==============================================================================
+CASO 26: Consistencia - Reglas con valores numéricos y varias condiciones
+==============================================================================
+Objetivo : Comprobar las reglas con rangos numéricos (voltaje) y las que exigen varias condiciones a la vez, sin falsos positivos en un caso coherente.
+Entrada  : Voltaje 3,2 / 16 / 12,6 V con tablero y luces; tablero y luces apagados con y sin clic.
+Esperado : C07 y C08; C09; ninguna; C06 solo con las tres condiciones.
+Obtenido : {'3,2 V': ['c07', 'c08'], '16 V': ['c09'], '12,6 V': [], 'sin corriente + clic': ['c06'], 'sin corriente': []}
+           reglas de consistencia en la base: ['c01', 'c02', 'c03', 'c04', 'c05', 'c06', 'c07', 'c08', 'c09']
+Comprobaciones:
+   [OK] (1) 3,2 V con tablero y luces normales dispara C07 y C08
+   [OK] (2) 16 V en reposo es imposible (C09, una sola condición)
+   [OK] (3) 12,6 V con tablero y luces normales es coherente
+   [OK] (4) C06 exige las tres condiciones a la vez
+Veredicto: APROBADO
+
+==============================================================================
+RESUMEN: 26 de 26 casos aprobados.
 ==============================================================================

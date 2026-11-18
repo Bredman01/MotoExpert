@@ -1,0 +1,52 @@
+MotoExpert - Pruebas de estrés del manejo de contradicciones (2026-11-17 18:51)
+Semilla aleatoria: 2026. Base: copia con el conocimiento aprendido vacío.
+
+E1. Barrido exhaustivo de pares de respuestas
+    2427 pares evaluados; 5 incompatibles; 4 subconjuntos de C06; 164 combinaciones de voltaje.
+    Discrepancias con el oráculo: 0 
+
+E2/E3. 1500 casos aleatorios (850 incompatibles, 650 coherentes)
+    falsos negativos: 0
+    falsos positivos: 0
+    diagnosticos con datos incompatibles: 0
+    alertas perdidas: 0
+    que falta incorrecto: 0
+    entrevista incorrecta: 0
+    excepciones: 0
+
+E4. Entradas hostiles
+    [OK] Lista vacía -> estado=sin_datos; inconsistencias=[] (1.8 ms)
+    [OK] Entrada que no es lista -> estado=sin_datos; inconsistencias=[] (1.1 ms)
+    [OK] Variables libres (ground/1) -> estado=sin_datos; inconsistencias=[] (1.7 ms)
+    [OK] Valores inválidos que 'contradicen' -> estado=datos_insuficientes; inconsistencias=[] (3.2 ms)
+    [OK] Mayúsculas en el conflicto -> estado=inconsistente; inconsistencias=['c00'] (1.3 ms)
+    [OK] Términos extraños -> estado=datos_insuficientes; inconsistencias=[] (2.7 ms)
+    [OK] Voltaje fuera de rango (99 V) -> estado=sin_diagnostico_concluyente; inconsistencias=[] (1.2 ms)
+    [OK] La misma respuesta 200 veces -> estado=datos_insuficientes; inconsistencias=[] (14.8 ms)
+    [OK] 500 observaciones + 1 contradicción al final -> estado=inconsistente; inconsistencias=['c00'] (31.5 ms)
+    [OK] Todas las contradicciones a la vez -> estado=inconsistente; inconsistencias=['c01', 'c02', 'c03', 'c04', 'c05', 'c07', 'c08'] (8.0 ms)
+
+E5. Contradicciones en lenguaje natural
+    [OK] «Mi moto arranca bien pero a veces no arranca» -> bloqueado=True
+    [OK] «Las luces están débiles y las luces están normales» -> bloqueado=True
+    [OK] «El motor no gira. Después el motor gira lento» -> bloqueado=True
+    [OK] «No huele a gasolina, pero huele a gasolina» -> bloqueado=True
+    [OK] «El filtro de aire está sucio y el filtro de aire está limpio» -> bloqueado=True
+    [OK] «El motor no gira y la moto arranca bien» -> bloqueado=True
+    [OK] «Las luces están débiles, las luces están débiles» -> bloqueado=False
+    [OK] «Mi moto de 150 cc no arranca, el motor gira lento y las luces están dé» -> bloqueado=False
+    [OK] «Quisiera saber el precio de una llanta» -> bloqueado=False
+    [OK] «Texto de 3605 palabras con la contradicción al final» -> bloqueado=True (960.4 ms)
+    [OK] «Texto con emojis, símbolos y números mal formados» -> bloqueado=False
+
+E6. Latencia por predicado (ms)
+    inconsistencias/2      llamadas=  3927  media=   0.65  p95=   1.45  máx=  38.01
+    consultar/6            llamadas=  1500  media=   3.28  p95=   8.03  máx=  34.82
+    que_falta/5            llamadas=  1500  media=   3.09  p95=    7.1  máx=  23.33
+    siguiente_pregunta/2   llamadas=  1500  media=   1.13  p95=   2.07  máx=  28.23
+    interpretar_texto/4    llamadas=     9  media=   4.51  p95=   6.12  máx=   8.65
+    Duración total: 16.3 s; 8436 consultas medidas.
+
+==============================================================================
+RESULTADO: APROBADO
+==============================================================================

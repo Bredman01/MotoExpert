@@ -62,6 +62,7 @@ ESTADO = {
     "sin_diagnostico_concluyente": ("Sin diagnóstico concluyente", "aviso"),
     "fuera_de_alcance": ("Fuera de alcance", "critico"),
     "sin_datos": ("Sin datos", "aviso"),
+    "inconsistente": ("Diagnóstico bloqueado", "critico"),
 }
 TITULO_SITUACION = {
     "definitivo": "Dictamen definitivo",
@@ -70,6 +71,7 @@ TITULO_SITUACION = {
     "sin_hipotesis": "Sin hipótesis activas",
     "fuera_de_alcance": "Fuera de alcance",
     "ambiguo": "Causas sin distinguir",
+    "inconsistente": "Datos incompatibles",
 }
 TITULO_ALTERNATIVA = {
     "descartada": "Descartada por verificación",
@@ -209,7 +211,8 @@ def resaltar_valores(texto: str) -> str:
 
 def fase_de(motivo: str) -> str:
     prefijo = motivo.split(":", 1)[0]
-    return prefijo if prefijo in FASES else "Diferenciación"
+    # «Consistencia»: la entrevista repite una respuesta que contradice otra.
+    return prefijo if prefijo in FASES or prefijo == "Consistencia" else "Diferenciación"
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +314,26 @@ def aviso_empate(falta: dict) -> None:
            f'<a class="mx-aviso-ir" href="#que-falta">Ir a «¿Qué falta?» ↓</a></div>')
 
 
+def aviso_inconsistencia(inconsistencias: list[dict]) -> None:
+    """
+    Entregable 4: los datos son lógicamente incompatibles y Prolog bloqueó el
+    diagnóstico. Muestra cada regla de consistencia que se cumplió, los hechos
+    que chocan y cómo corregirlos.
+    """
+    if not inconsistencias:
+        return
+    reglas = "".join(
+        f'<div class="mx-incompat"><p class="mx-incompat-et"><code>{e(i["id"].upper())}</code>'
+        f'{e(i["titulo"])}</p>'
+        f'<ul class="mx-choque">{"".join(f"<li>{e(h)}</li>" for h in i["hechos"])}</ul>'
+        f'<p class="mx-p">{e(i["explicacion"])}</p></div>' for i in inconsistencias)
+    bloque(f'<div class="mx-aviso mx-bloqueo" role="alert"><p class="mx-aviso-et">'
+           f'Datos incompatibles: diagnóstico bloqueado</p>{reglas}'
+           '<p class="mx-p">Corrija la respuesta que no es cierta: respóndala de nuevo en la entrevista '
+           'o en «¿Qué falta?», cámbiela en el ingreso libre o use «Deshacer».</p>'
+           '<a class="mx-aviso-ir" href="#que-falta">Ir a las respuestas por revisar ↓</a></div>')
+
+
 def campo_libre(info: dict, actual) -> object:
     """Un campo del ingreso libre: botones de opción o, si es numérico, una caja de texto."""
     nota = NOTA_TIPO.get(info["tipo"])
@@ -352,7 +375,8 @@ def ingreso_libre(catalogo: dict) -> None:
                     nuevos[info["variable"]] = campo_libre(info, actuales.get(info["variable"]))
         with mediciones:
             st.caption("Si tiene la medición exacta, escríbala: un clasificador la convierte en el "
-                       "dato que usa el sistema y reemplaza lo marcado en la pregunta equivalente.")
+                       "dato que usa el sistema. Si contradice lo marcado en la pregunta equivalente, "
+                       "el diagnóstico se bloquea hasta corregirlo.")
             temperatura = st.text_input("Temperatura del aceite del motor (°C)",
                                         placeholder="Ej.: 135 · reemplaza «Sobrecalentamiento»")
             dias = st.text_input("Días sin usar la moto", placeholder="Ej.: 45 · reemplaza «Tiempo sin uso»")
@@ -363,8 +387,13 @@ def ingreso_libre(catalogo: dict) -> None:
                    for clave, valor in (("temperatura", limpiar_valor(temperatura)),
                                         ("dias_sin_uso", limpiar_valor(dias)))}
         convertidas, detalle = convertir_mediciones(medidas)
-        obs.update(convertidas)
-        st.session_state.obs = list(obs.items())
+        # Entregable 4: la medición NO reemplaza en silencio lo marcado. Si
+        # contradice la respuesta (por ejemplo «Sobrecalentamiento: no» con
+        # 135 °C), se envían las dos y la regla de consistencia C00 de Prolog
+        # bloquea el diagnóstico hasta que el usuario corrija una.
+        choques = [(v, x) for v, x in convertidas if v in obs and obs[v] != x]
+        obs.update({v: x for v, x in convertidas if v not in obs})
+        st.session_state.obs = list(obs.items()) + choques
         st.session_state.conversion = detalle
         st.rerun()
     if st.session_state.get("conversion"):
@@ -457,23 +486,29 @@ def panel_que_falta(falta: dict, catalogo: dict) -> None:
     if not sugerencias:
         return
     principal, otras = sugerencias[0], sugerencias[1:]
+    revision = situacion == "inconsistente"     # respuestas a corregir, no datos nuevos
     with st.container(border=True):
         peso = '<i></i>' * principal["peso"]
+        detalle = ("" if revision else
+                   f'<div class="mx-fila mx-muted" style="font-size:.85rem">'
+                   f'<span class="mx-peso" aria-hidden="true">{peso}</span>'
+                   f'Peso {principal["peso"]} · prioridad afectada {principal["prioridad"]}</div>')
+        rotulo = "Respuesta por revisar" if revision else "Dato sugerido"
         bloque(f'<div style="display:grid;gap:.5rem">'
-               f'<p class="mx-eyebrow">Dato sugerido · {e(principal["tipo"].replace("_", " "))}</p>'
+               f'<p class="mx-eyebrow">{rotulo} · {e(principal["tipo"].replace("_", " "))}</p>'
                f'<p class="mx-titulo">{e(principal["etiqueta"])}</p>'
-               f'<div class="mx-fila mx-muted" style="font-size:.85rem">'
-               f'<span class="mx-peso" aria-hidden="true">{peso}</span>'
-               f'Peso {principal["peso"]} · prioridad afectada {principal["prioridad"]}</div>'
-               f'{efectos_html(principal["efectos"])}</div>')
+               f'{detalle}{efectos_html(principal["efectos"])}</div>')
         if principal["variable"] in catalogo:
             formulario_respuesta(catalogo[principal["variable"]], "falta")
     if otras:
         filas = "".join(
             f'<li><div class="mx-fila"><b>{e(s["etiqueta"])}</b>'
-            f'<span class="mx-muted" style="font-size:.8rem">peso {s["peso"]} · {e(s["tipo"].replace("_", " "))}</span></div>'
+            f'<span class="mx-muted" style="font-size:.8rem">'
+            + ("" if revision else f'peso {s["peso"]} · ')
+            + f'{e(s["tipo"].replace("_", " "))}</span></div>'
             f'{efectos_html(s["efectos"])}</li>' for s in otras)
-        bloque(f'<p class="mx-eyebrow">También ayudarían</p><ul class="mx-otras">{filas}</ul>')
+        titulo_otras = "También pueden estar mal" if revision else "También ayudarían"
+        bloque(f'<p class="mx-eyebrow">{titulo_otras}</p><ul class="mx-otras">{filas}</ul>')
 
 
 def traza_html(pasos: list[dict]) -> str:
@@ -552,13 +587,15 @@ def cabecera() -> None:
            '<li>Carburador</li><li>12 V</li></ul></header>')
 
 
-def barra_lateral(catalogo: dict) -> None:
+def barra_lateral(catalogo: dict, conflictos: set[str] = frozenset()) -> None:
+    """Datos del caso; los que participan en una incompatibilidad se marcan."""
     with st.sidebar:
         obs = observaciones()
         bloque(f'<p class="mx-eyebrow">Datos del caso · {len(obs)}</p>')
         if obs:
-            filas = "".join(f"<dt>{e(et)}</dt><dd>{e(val)}</dd>"
-                            for et, val in (texto_valor(catalogo, v, x) for v, x in obs))
+            filas = "".join(
+                f'<dt{" class=conflicto" if v in conflictos else ""}>{e(et)}</dt><dd>{e(val)}</dd>'
+                for v, (et, val) in ((v, texto_valor(catalogo, v, x)) for v, x in obs))
             bloque(f'<dl class="mx-datos">{filas}</dl>')
         else:
             st.caption("Aún no hay respuestas.")
@@ -589,8 +626,14 @@ def descripcion_libre(motor: MotorMotoExpert) -> None:
             return
         resultado = motor.interpretar(texto)
         # Cada dato entendido reemplaza el valor anterior de la misma pregunta.
-        for variable, valor in resultado["observaciones"]:
-            registrar(variable, valor)
+        # Si el mismo texto da dos valores distintos a una pregunta, el segundo
+        # ("contradictorio") se agrega sin reemplazar: Prolog detecta el choque
+        # (regla C00) y bloquea el diagnóstico.
+        for r in resultado["reconocidos"]:
+            if r["estado"] == "aceptado":
+                registrar(r["variable"], r["valor"])
+            elif r["estado"] == "contradictorio":
+                st.session_state.obs.append((r["variable"], r["valor"]))
         st.session_state.interpretacion = resultado
         st.rerun()
     if st.session_state.get("interpretacion"):
@@ -601,7 +644,8 @@ def mostrar_interpretacion(resultado: dict) -> None:
     """Qué parte del texto se entendió y qué dato salió de cada una."""
     filas = []
     for r in resultado["reconocidos"]:
-        nota = {"repetido": "ya mencionado antes en el texto; vale el primero",
+        nota = {"repetido": "ya mencionado antes en el texto",
+                "contradictorio": "contradice lo dicho antes en el texto",
                 "invalido": "valor fuera de rango; no se usa"}.get(r["estado"], "")
         filas.append(f'<li class="mx-entendido {e(r["estado"])}"><span class="mx-frase">'
                      f'«{e(r["frase"])}»</span><span class="mx-dato">{e(mayus_inicial(r["texto"]))}'
@@ -988,15 +1032,19 @@ def main() -> None:
                 "instalado (pip install pyswip).")
         st.stop()
 
-    barra_lateral(catalogo)
     try:
+        # Entregable 4: las reglas de consistencia de Prolog se evalúan
+        # primero; los datos que chocan se marcan en la barra lateral.
+        obs = observaciones()
+        inconsistencias = motor.inconsistencias(obs) if obs else []
+        barra_lateral(catalogo, {v for i in inconsistencias for v in i["variables"]})
+
         if st.session_state.get("experto") and st.session_state.get("vista_experto"):
             panel_experto(motor)
             return
 
         # Prolog se consulta antes de dibujar, para que el aviso de empate
         # pueda aparecer junto a la pregunta que el usuario está mirando.
-        obs = observaciones()
         if obs:
             respuesta = motor.consultar(obs)
             explicacion = motor.explicar(obs)
@@ -1006,6 +1054,7 @@ def main() -> None:
         with captura:
             titulo_seccion("Captura")
             if obs:
+                aviso_inconsistencia(inconsistencias)
                 aviso_empate(falta)
             descripcion, guiada, libre = st.tabs(["Descripción", "Entrevista guiada", "Ingreso libre"])
             with descripcion:
